@@ -9,14 +9,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ExcelJS from "exceljs";
 import { buatRoster, cekRoster, nextMonthKey, periksaSistem } from "../src/app.mjs";
+import { needsPlainText, plainText } from "../src/console-text.mjs";
 import { readRosterWorkbook } from "../src/excel-read.mjs";
 import { monthLabel } from "../src/workspace.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const lines = [];
 let failures = 0;
+const plain = needsPlainText();
 const log = (text) => {
-  console.log(text);
+  console.log(plain ? plainText(text) : text); // old Windows console: ASCII
   lines.push(text);
 };
 const step = async (label, run) => {
