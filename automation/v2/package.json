@@ -1,0 +1,21 @@
+{
+  "name": "roster-ops-noc",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pembuat roster shift otomatis untuk tim Ops + NOC",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "menu": "node roster-cli.mjs menu",
+    "buat": "node roster-cli.mjs buat",
+    "cek": "node roster-cli.mjs cek",
+    "test": "node --test",
+    "backtest": "node tools/backtest.mjs",
+    "verify-excel": "node tools/verify-excel.mjs"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0"
+  }
+}

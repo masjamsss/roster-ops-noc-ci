@@ -1,0 +1,6 @@
+{
+  "catatan": "Pengaturan lanjutan untuk pengelola, bukan untuk admin. Biarkan kosong untuk memakai nilai bawaan (automation/v2/src/defaults.mjs). Contoh: \"search\": { \"beamWidth\": 4000 } untuk pencarian lebih luas.",
+  "weights": {},
+  "search": {},
+  "localSearch": {}
+}

@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 1,
+  "country": "ID",
+  "year": 2027,
+  "timezone": "Asia/Jakarta",
+  "status": "official-verified",
+  "officialSource": {
+    "title": "Government Announces 2027 National Holidays and Collective Leave Days",
+    "url": "https://setkab.go.id/en/govt-annnounces-2027-national-holidays-and-collective-leave-days/",
+    "documentNumbers": [
+      "1205/2026",
+      "3/2026",
+      "2/2026"
+    ],
+    "publishedDate": "2026-09-15",
+    "checkedDate": "2026-09-28",
+    "expectedTokens": [
+      "2027",
+      "National Holidays",
+      "Collective Leave"
+    ]
+  },
+  "days": [
+    {
+      "date": "2027-01-01",
+      "type": "national",
+      "name": "New Year 2027"
+    },
+    {
+      "date": "2027-01-05",
+      "type": "national",
+      "name": "Isra Miraj"
+    },
+    {
+      "date": "2027-02-05",
+      "type": "collective_leave",
+      "name": "Collective Leave Chinese New Year"
+    },
+    {
+      "date": "2027-02-06",
+      "type": "national",
+      "name": "Chinese New Year 2578"
+    },
+    {
+      "date": "2027-03-08",
+      "type": "national",
+      "name": "Nyepi 1949"
+    },
+    {
+      "date": "2027-03-09",
+      "type": "collective_leave",
+      "name": "Collective Leave Eid al-Fitr"
+    },
+    {
+      "date": "2027-03-10",
+      "type": "national",
+      "name": "Eid al-Fitr 1448"
+    },
+    {
+      "date": "2027-03-11",
+      "type": "national",
+      "name": "Eid al-Fitr 1448"
+    },
+    {
+      "date": "2027-03-12",
+      "type": "collective_leave",
+      "name": "Collective Leave Eid al-Fitr"
+    },
+    {
+      "date": "2027-03-15",
+      "type": "collective_leave",
+      "name": "Collective Leave Eid al-Fitr"
+    },
+    {
+      "date": "2027-03-25",
+      "type": "collective_leave",
+      "name": "Collective Leave Good Friday"
+    },
+    {
+      "date": "2027-03-26",
+      "type": "national",
+      "name": "Good Friday"
+    },
+    {
+      "date": "2027-03-28",
+      "type": "national",
+      "name": "Easter"
+    },
+    {
+      "date": "2027-05-01",
+      "type": "national",
+      "name": "International Labour Day"
+    },
+    {
+      "date": "2027-05-06",
+      "type": "national",
+      "name": "Ascension of Jesus Christ"
+    },
+    {
+      "date": "2027-05-17",
+      "type": "national",
+      "name": "Eid al-Adha 1448"
+    },
+    {
+      "date": "2027-05-18",
+      "type": "collective_leave",
+      "name": "Collective Leave Eid al-Adha"
+    },
+    {
+      "date": "2027-05-19",
+      "type": "collective_leave",
+      "name": "Collective Leave Eid al-Adha"
+    },
+    {
+      "date": "2027-05-20",
+      "type": "national",
+      "name": "Vesak Day 2571"
+    },
+    {
+      "date": "2027-06-01",
+      "type": "national",
+      "name": "Pancasila Day"
+    },
+    {
+      "date": "2027-06-06",
+      "type": "national",
+      "name": "Islamic New Year 1449"
+    },
+    {
+      "date": "2027-08-15",
+      "type": "national",
+      "name": "Prophet Muhammad Birthday"
+    },
+    {
+      "date": "2027-08-17",
+      "type": "national",
+      "name": "Independence Day"
+    },
+    {
+      "date": "2027-12-24",
+      "type": "collective_leave",
+      "name": "Collective Leave Christmas"
+    },
+    {
+      "date": "2027-12-25",
+      "type": "national",
+      "name": "Christmas Day"
+    },
+    {
+      "date": "2027-12-26",
+      "type": "national",
+      "name": "Isra dan Mikraj Nabi Muhammad SAW"
+    }
+  ]
+}

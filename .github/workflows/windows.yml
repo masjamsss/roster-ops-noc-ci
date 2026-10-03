@@ -1,0 +1,46 @@
+# Real Windows test of what an admin does: double-click "Buat Roster.bat" on a
+# fresh copy (first-run install, then the menu), the full test suite, the
+# self-test (a roster made in a temporary copy, best mode with worker threads),
+# and the launcher started from a network path (\\server\share).
+# On the code-only CI mirror there is no Data Roster.xlsx or hasil/: the tool
+# creates the workbook, and the September test fixture stands in for the history.
+name: Windows
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24]
+    defaults:
+      run:
+        shell: cmd
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Double-click Buat Roster.bat (first run installs, menu 0 exits)
+        run: |
+          echo 0| "Buat Roster.bat" > launcher.log 2>&1
+          type launcher.log
+          findstr /C:"ROSTER TIM OPS + NOC" launcher.log
+      - name: Test suite
+        working-directory: automation/v2
+        run: npm test
+      - name: Sample month for the self-test (September 2026 fixture)
+        run: |
+          if not exist hasil\2026-09 mkdir hasil\2026-09
+          if not exist hasil\2026-09\roster-2026-09.csv copy automation\v2\test\fixtures\september-2026.csv hasil\2026-09\roster-2026-09.csv
+      - name: Self-test (Uji Program)
+        run: node automation\v2\tools\selftest.mjs
+      - name: Launcher from a network path
+        shell: pwsh
+        run: |
+          $unc = "\\localhost\" + $env:GITHUB_WORKSPACE.Replace(":", "$")
+          cmd /c "echo 0| `"$unc\Buat Roster.bat`" > unc.log 2>&1"
+          Get-Content unc.log
+          if (-not (Select-String -Path unc.log -SimpleMatch "ROSTER TIM OPS + NOC")) { exit 1 }
