@@ -11,6 +11,7 @@ import { formatTanggal, KODE_LABEL } from "./labels-id.mjs";
 import { overtimeCover } from "./backup-plan.mjs";
 import { buildNotes, computeDayRows, computeMemberSummary, findNightBlocks } from "./metrics.mjs";
 import { explainMinimalDays } from "./minimal-days.mjs";
+import { betterThan, isPerfect, PERFECT_BUDGET_MS, roundFits, targetedVariants } from "./perfect.mjs";
 import { workLifeBalance } from "./wellbeing.mjs";
 import { initialNightState } from "./night-rotation.mjs";
 import { fairnessOffsets, makeEnv, scoreSchedule } from "./objective.mjs";
@@ -292,31 +293,59 @@ export async function generateRoster({ config, calendars, history, onProgress })
     // (memory pressure). So: about 2.8 GB per worker and at most half the cores.
     ? Math.max(1, Math.min(variants.length, config.search.workers ?? Infinity, Math.floor(cores / 2), Math.floor(os.totalmem() / 2.8e9)))
     : 1;
-  const fractions = variants.map(() => 0);
-  const progressOf = (index) => (done, total) => {
-    fractions[index] = done / Math.max(1, total);
-    onProgress?.({ step: "search", done: Math.round(fractions.reduce((sum, value) => sum + value, 0) * 1000), total: variants.length * 1000 });
+  const runAll = async (list, step) => {
+    const fractions = list.map(() => 0);
+    const progressOf = (index) => (done, total) => {
+      fractions[index] = done / Math.max(1, total);
+      onProgress?.({ step, done: Math.round(fractions.reduce((sum, value) => sum + value, 0) * 1000), total: list.length * 1000 });
+    };
+    const size = Math.min(workers, list.length);
+    return size > 1
+      ? await runInWorkers(input, list, size, progressOf)
+      : list.map((variant, index) => {
+        try {
+          return { ok: true, result: runVariant(input, variant, progressOf(index)) };
+        } catch (error) {
+          return { ok: false, error };
+        }
+      });
   };
-  const outcomes = workers > 1
-    ? await runInWorkers(input, variants, workers, progressOf)
-    : variants.map((variant, index) => {
-      try {
-        return { ok: true, result: runVariant(input, variant, progressOf(index)) };
-      } catch (error) {
-        return { ok: false, error };
-      }
-    });
-  const done = outcomes.filter((outcome) => outcome.ok);
-  if (done.length === 0) throw outcomes[0].error;
-  const portfolio = outcomes.map((outcome, index) => (outcome.ok ? { variant: index + 1, score: Math.round(outcome.result.total), serious: outcome.result.serious } : { variant: index + 1, failed: true }));
+  const searchStarted = Date.now();
+  const outcomes = (await runAll(variants, "search")).map((outcome) => ({ ...outcome, round: 0 }));
+  const firstRoundMs = Date.now() - searchStarted;
+  if (!outcomes.some((outcome) => outcome.ok)) throw outcomes[0].error;
   let chosenIndex = -1;
-  outcomes.forEach((outcome, index) => {
-    if (!outcome.ok) return;
-    const best = chosenIndex >= 0 ? outcomes[chosenIndex].result : null;
-    const run = outcome.result;
-    if (!best || run.serious < best.serious || (run.serious === best.serious && run.total < best.total)) chosenIndex = index;
+  const choose = () => outcomes.forEach((outcome, index) => {
+    if (outcome.ok && betterThan(outcome.result, chosenIndex >= 0 ? outcomes[chosenIndex].result : null)) chosenIndex = index;
   });
+  choose();
+  // Not perfect yet (a serious finding, or someone's work-life score below 65):
+  // extra attempts aimed at what is left, up to search.perfectRounds rounds.
+  const perfectRounds = variants.length > 1 ? config.search.perfectRounds ?? 2 : 0;
+  let rounds = 0;
+  let stoppedByTime = false;
+  for (let round = 1; round <= perfectRounds && !isPerfect(outcomes[chosenIndex].result); round += 1) {
+    const aimed = targetedVariants(outcomes[chosenIndex].result, round);
+    if (aimed.length === 0) break;
+    // Slow computers (e.g. 2 cores: attempts one by one) skip rounds that would
+    // push the whole search past the time budget (6 minutes).
+    const budgetMs = config.search.perfectBudgetMs ?? PERFECT_BUDGET_MS;
+    if (!roundFits({ elapsedMs: Date.now() - searchStarted, firstRoundMs, firstRoundCount: variants.length, workers: Math.min(workers, variants.length), nextCount: aimed.length, budgetMs })) {
+      stoppedByTime = true;
+      break;
+    }
+    rounds = round;
+    onProgress?.({ step: "perfect", round, rounds: perfectRounds });
+    const extra = await runAll(aimed.map(({ aim, ...variant }) => variant), "perfect-search");
+    extra.forEach((outcome, index) => outcomes.push({ ...outcome, round, aim: aimed[index].aim }));
+    choose();
+  }
+  const portfolio = outcomes.map((outcome, index) => (outcome.ok
+    ? { variant: index + 1, round: outcome.round, ...(outcome.aim ? { aim: outcome.aim } : {}), score: Math.round(outcome.result.total), serious: outcome.result.serious, wlbLow: outcome.result.wlbLow, wlbTeam: outcome.result.wlbTeam }
+    : { variant: index + 1, round: outcome.round, failed: true }));
   const chosen = outcomes[chosenIndex].result;
+  // Only best-result mode reviews candidates, so only it can say "perfect".
+  const perfect = variants.length < 2 ? null : { reached: isPerfect(chosen), rounds, tried: outcomes.filter((outcome) => outcome.ok).length, remaining: (chosen.findings ?? []).filter((finding) => finding.level === "penting").map((finding) => finding.id), wlbLow: chosen.wlbLow ?? 0, stoppedByTime };
   onProgress?.({ step: "improve" });
   const codes = chosen.codes;
   const nightQueueAfterMonth = chosen.nightQueueAfterMonth;
@@ -402,6 +431,7 @@ export async function generateRoster({ config, calendars, history, onProgress })
       localSwaps: localLog.length,
       localLog,
       portfolio,
+      perfect,
       chosenVariant: chosenIndex + 1,
       workers,
       runtimeMs: Date.now() - started

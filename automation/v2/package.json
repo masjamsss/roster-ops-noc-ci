@@ -13,7 +13,8 @@
     "cek": "node roster-cli.mjs cek",
     "test": "node --test",
     "backtest": "node tools/backtest.mjs",
-    "verify-excel": "node tools/verify-excel.mjs"
+    "verify-excel": "node tools/verify-excel.mjs",
+    "paket": "node tools/paket.mjs"
   },
   "dependencies": {
     "exceljs": "^4.4.0"

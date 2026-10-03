@@ -68,7 +68,17 @@ export function checksLayout(result) {
   const rules = Object.fromEntries(result.audit.checks.map((check, index) => [check.id, ruleFirst + index]));
   const quality = Object.fromEntries(QUALITY_CHECKS.map(([id], index) => [id, qualityFirst + index]));
   const wlb = Object.fromEntries(result.members.map((member, index) => [member.id, wlbFirst + index]));
-  return { ruleFirst, ruleTotal, qualityHeader, qualityFirst, qualityTotal, wlbHeader, wlbFirst, wlbTeam, rules, quality, wlb, lastColumn: 17 };
+  return { ruleFirst, ruleTotal, qualityHeader, qualityFirst, qualityTotal, wlbHeader, wlbFirst, wlbTeam, rules, quality, wlb, lastColumn: 17, perfectText: perfectText(result) };
+}
+
+// "Perfect" (perfect.mjs): every rule met, no serious finding, nobody's work-life
+// score below 65. The same sentence is built by a formula on the Pemeriksaan sheet.
+const PERFECT = "✔ HASIL SEMPURNA: semua aturan terpenuhi, tidak ada temuan penting, tidak ada skor kerja–hidup di bawah 65.";
+function perfectText(result) {
+  const rulesFailed = result.audit.checks.filter((check) => !check.ok).length;
+  const serious = result.quality?.serious ?? 0;
+  const low = (result.wellbeing?.members ?? []).filter((item) => item.score !== null && item.score < 65).length;
+  return rulesFailed === 0 && serious === 0 && low === 0 ? PERFECT : `Belum sempurna: ${rulesFailed} aturan tidak terpenuhi, ${serious} temuan penting, ${low} orang dengan skor kerja–hidup di bawah 65.`;
 }
 
 export function checkSheets(workbook, result, L, ui) {
@@ -328,6 +338,21 @@ export function checksSheet(workbook, result, L, ui, calc) {
   const sumRows = (name) => grids.map((grid) => `SUM(Hitungan!${monthRange(grid.row(name)).replaceAll("$", "")})`).join("+");
   const sumValues = (name) => grids.reduce((sum, grid) => sum + grid.g[name].reduce((a, b) => a + b, 0), 0);
   const okText = "✔ Terpenuhi";
+
+  // ---------- perfect state (formula) ----------
+  sheet.mergeCells(3, 1, 3, layout.lastColumn);
+  const low = `COUNTIF(O${layout.wlbFirst}:O${layout.wlbTeam - 1},"Perlu perhatian")`;
+  setCell(sheet.getCell(3, 1), {
+    formula: `IF(AND(E${layout.ruleTotal}=0,F${layout.qualityTotal}=0,${low}=0),"${PERFECT}","Belum sempurna: "&E${layout.ruleTotal}&" aturan tidak terpenuhi, "&F${layout.qualityTotal}&" temuan penting, "&${low}&" orang dengan skor kerja–hidup di bawah 65.")`,
+    result: layout.perfectText
+  }, { bold: true, align: "left" });
+  sheet.addConditionalFormatting({
+    ref: "A3",
+    rules: [
+      { type: "expression", priority: 20, formulae: ['LEFT($A$3,1)="✔"'], style: { font: { color: { argb: C.okText }, bold: true }, fill: { type: "pattern", pattern: "solid", bgColor: { argb: C.okFill } } } },
+      { type: "expression", priority: 21, formulae: ['LEFT($A$3,1)<>"✔"'], style: { font: { color: { argb: C.warnText }, bold: true }, fill: { type: "pattern", pattern: "solid", bgColor: { argb: C.warnFill } } } }
+    ]
+  });
 
   // ---------- rules ----------
   heading(sheet, 4, "Aturan wajib", layout.lastColumn);

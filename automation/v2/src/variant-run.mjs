@@ -6,7 +6,9 @@ import { improveBySwaps } from "./local-search.mjs";
 import { computeDayRows, computeMemberSummary } from "./metrics.mjs";
 import { scoreSchedule } from "./objective.mjs";
 import { reviewQuality } from "./quality.mjs";
+import { WLB_LOW } from "./perfect.mjs";
 import { runBeamSearch } from "./search.mjs";
+import { workLifeBalance } from "./wellbeing.mjs";
 
 // Summary, day rows and quality review of a candidate roster (codes[member][day]).
 export function describeCandidate(input, codes) {
@@ -16,7 +18,9 @@ export function describeCandidate(input, codes) {
   const publishedDays = days.filter((day) => day.published);
   const schedule = Object.fromEntries(members.map((member, i) => [member.id, Object.fromEntries(publishedDays.map((day) => [day.date, codes[i][day.dayIndex]]))]));
   const history = { codesById: Object.fromEntries(members.map((member, i) => [member.id, historyCodes[i] ?? []])) };
-  return { summary, dayRows, quality: reviewQuality({ members, days: dayRows, schedule, memberSummary: summary, settings: { rules: config.rules }, history }) };
+  const quality = reviewQuality({ members, days: dayRows, schedule, memberSummary: summary, settings: { rules: config.rules }, history });
+  const wellbeing = workLifeBalance({ members, days: dayRows, schedule, memberSummary: summary, settings: { rules: config.rules }, history });
+  return { summary, dayRows, quality, wellbeing };
 }
 
 // `variant` steers the search: other search settings, weights scaled by a
@@ -40,6 +44,18 @@ export function runVariant(input, variant, onProgress) {
     localLog = improved.log;
   }
   const total = scoreSchedule({ codes, members, days, initialStates, ctx, config, fixed, env }).total;
-  const serious = input.withQuality ? describeCandidate(input, codes).quality.serious : 0;
-  return { codes, total, before, serious, localLog, searchLog: run.log, nightQueueAfterMonth: path[env.lastPublishedIndex].night.queue };
+  // Best-result mode also reviews each candidate: serious findings and work-life
+  // balance decide between candidates and aim the extra attempts (perfect.mjs).
+  let serious = 0;
+  let findings = [];
+  let wlbLow = 0;
+  let wlbTeam = null;
+  if (input.withQuality) {
+    const described = describeCandidate(input, codes);
+    serious = described.quality.serious;
+    findings = described.quality.findings.map(({ id, level, count }) => ({ id, level, count }));
+    wlbLow = described.wellbeing.members.filter((item) => item.score !== null && item.score < WLB_LOW).length;
+    wlbTeam = described.wellbeing.team;
+  }
+  return { codes, total, before, serious, findings, wlbLow, wlbTeam, localLog, searchLog: run.log, nightQueueAfterMonth: path[env.lastPublishedIndex].night.queue };
 }

@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { buatRoster, cekRoster, nextMonthKey, perbaruiHariLibur, periksaSistem, previewRoster, siapkanData } from "./src/app.mjs";
 import { appendRequest } from "./src/input-workbook.mjs";
 import { parseMonthKey } from "./src/date-utils.mjs";
+import { needsPlainText, plainText } from "./src/console-text.mjs";
 import { RosterError, explainFileError } from "./src/errors.mjs";
 import { formatTanggal, KODE_LABEL } from "./src/labels-id.mjs";
 import { monthLabel, workspacePaths } from "./src/workspace.mjs";
@@ -16,6 +17,17 @@ import { monthLabel, workspacePaths } from "./src/workspace.mjs";
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const LINE = "=".repeat(58);
 // Older Windows consoles garble block characters; plain ASCII works everywhere.
+// Old Windows console (no Windows Terminal): write plain ASCII instead of symbols
+// it cannot show (✔ ✖ ⚠ …). Covers console output and the menu prompts.
+if (needsPlainText()) {
+  for (const name of ["log", "error", "warn"]) {
+    const original = console[name].bind(console);
+    console[name] = (...args) => original(...args.map((arg) => (typeof arg === "string" ? plainText(arg) : arg)));
+  }
+  const write = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (chunk, ...rest) => write(typeof chunk === "string" ? plainText(chunk) : chunk, ...rest);
+}
+
 const BAR_FULL = process.platform === "win32" ? "#" : "█";
 const BAR_EMPTY = process.platform === "win32" ? "-" : "░";
 
@@ -80,8 +92,11 @@ function openPath(target) {
 function progressPrinter(label) {
   const tty = process.stdout.isTTY;
   let lastPercent = -1;
-  return ({ step, done, total }) => {
-    if (step === "search") {
+  return ({ step, done, total, round, rounds }) => {
+    if (step === "perfect") {
+      console.log(`  Belum sempurna, mencari lagi dengan percobaan terarah (putaran ${round} dari ${rounds})...`);
+      lastPercent = -1;
+    } else if (step === "search" || step === "perfect-search") {
       const percent = Math.round((done / total) * 100);
       if (tty) {
         const width = 30;
@@ -134,6 +149,15 @@ function printBuat(root, done) {
   else {
     console.log(`   Kualitas   : ${serious.length} temuan penting, ${minor.length} perhatian (rincian di sheet Ringkasan)`);
     for (const finding of serious) console.log(`     ⚠ ${finding.title}: ${finding.details.join(", ")}`);
+  }
+  const perfect = done.result.search?.perfect;
+  if (perfect) {
+    const extra = (perfect.rounds ? `, termasuk ${perfect.rounds} putaran percobaan terarah` : "") + (perfect.stoppedByTime ? " (putaran tambahan dihentikan: komputer ini lambat, batas waktu 6 menit)" : "");
+    if (perfect.reached) console.log(`   Hasil      : ✔ SEMPURNA (semua aturan, 0 temuan penting, tidak ada skor kerja–hidup di bawah 65); ${perfect.tried} susunan dicoba${extra}`);
+    else {
+      const left = [...serious.map((finding) => finding.title), ...(perfect.wlbLow ? [`${perfect.wlbLow} orang dengan skor kerja–hidup di bawah 65`] : [])];
+      console.log(`   Hasil      : terbaik dari ${perfect.tried} susunan${extra}; belum sempurna karena ${left.join("; ")}. Penyebabnya dijelaskan di Ringkasan.`);
+    }
   }
   const wellbeing = done.result.wellbeing;
   if (wellbeing?.team !== null && wellbeing?.team !== undefined) {

@@ -26,6 +26,7 @@ const EVENTS = [
 
 const args = process.argv.slice(2);
 const weightsArg = args.includes("--weights") ? JSON.parse(args[args.indexOf("--weights") + 1]) : null;
+const searchArg = args.includes("--search") ? JSON.parse(args[args.indexOf("--search") + 1]) : null;
 const best = args.includes("--best");
 
 const root = await mkdtemp(path.join(tmpdir(), "roster-backtest-"));
@@ -34,7 +35,7 @@ try {
   await cp(path.join(REAL_ROOT, "pengaturan", "hari-libur"), path.join(root, "pengaturan", "hari-libur"), { recursive: true });
   await mkdir(path.join(root, "hasil", "2026-09"), { recursive: true });
   await cp(path.join(REAL_ROOT, "hasil", "2026-09", "roster-2026-09.csv"), path.join(root, "hasil", "2026-09", "roster-2026-09.csv"));
-  if (weightsArg) await writeFile(path.join(root, "pengaturan", "lanjutan.json"), JSON.stringify({ weights: weightsArg }));
+  if (weightsArg || searchArg) await writeFile(path.join(root, "pengaturan", "lanjutan.json"), JSON.stringify({ weights: weightsArg ?? {}, search: searchArg ?? {} }));
   await siapkanData({ root });
   const book = path.join(root, "Data Roster.xlsx");
   for (const [name, from, to, kind] of EVENTS) await appendRequest(book, { name, from, to, kind });
@@ -50,7 +51,7 @@ try {
   await workbook.xlsx.writeFile(book);
 
   const totals = { nights: {}, longBlocks: {}, weekends: {}, ideal: 0, minimal: 0, serious: 0, weeksOver: 0, heaviest: 0, wlb: [] };
-  console.log(`Backtest ${MONTHS[0]} .. ${MONTHS.at(-1)}${weightsArg ? ` with ${JSON.stringify(weightsArg)}` : ""}${best ? " (best-result mode)" : ""}`);
+  console.log(`Backtest ${MONTHS[0]} .. ${MONTHS.at(-1)}${weightsArg ? ` with ${JSON.stringify(weightsArg)}` : ""}${searchArg ? ` search ${JSON.stringify(searchArg)}` : ""}${best ? " (best-result mode)" : ""}`);
   for (const key of MONTHS) {
     const started = Date.now();
     const { result } = await buatRoster({ root, monthKey: key, online: false, force: true, best, now: new Date("2026-09-30T08:00:00") });
@@ -76,7 +77,9 @@ try {
       `IDEAL ${status.IDEAL ?? 0} CUKUP ${status.CUKUP ?? 0} MINIMAL ${status.MINIMAL ?? 0}`,
       `nights ${night.map(nightsOf).join(",")}`, `3-night ${night.map(longOf).join(",")}`, `women S1/S2 ${women.join(" ")}`,
       `quality ${result.quality.serious}p/${result.quality.notices}n${result.quality.serious ? ` (${result.quality.findings.filter((finding) => finding.level === "penting").map((finding) => `${finding.id} ${finding.details.join(", ")}`).join("; ")})` : ""}`, `max week ${Math.max(...weeks)} h`,
-      `work-life ${result.wellbeing?.team ?? "-"}`, `${Math.round((Date.now() - started) / 1000)} s`
+      `work-life ${result.wellbeing?.team ?? "-"} (min ${Math.min(...result.wellbeing.members.filter((item) => item.score !== null).map((item) => item.score))})`,
+      result.search.perfect ? `perfect ${result.search.perfect.reached ? "YES" : "no"} (${result.search.perfect.tried} tried, ${result.search.perfect.rounds} extra rounds)` : "perfect -",
+      `${Math.round((Date.now() - started) / 1000)} s`
     ].join(" | "));
   }
   console.log(`Six months: IDEAL ${totals.ideal}, MINIMAL ${totals.minimal}, serious findings ${totals.serious}, person-weeks > 40 h ${totals.weeksOver}, heaviest week ${totals.heaviest} h, work-life (team, monthly) ${totals.wlb.join(" ")}`);

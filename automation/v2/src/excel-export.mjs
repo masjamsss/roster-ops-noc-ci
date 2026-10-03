@@ -423,6 +423,16 @@ function summarySheet(workbook, result, L, checks) {
   setCell(sheet.getCell(row, 1), { formula: `IF(${failedCell}=0,"${okConclusion}","✖ Ada "&${failedCell}&" aturan yang tidak terpenuhi — lihat sheet Pemeriksaan dan perbaiki sebelum dipakai.")`, result: conclusion }, { bold: true, size: 12, align: "left" });
   passFail(sheet, `A${row}`, `$A$${row}`, 70);
   sheet.getRow(row).height = 28;
+  row += 1;
+  sheet.mergeCells(row, 1, row, lastColumn);
+  setCell(sheet.getCell(row, 1), { formula: "Pemeriksaan!$A$3", result: checks.perfectText }, { bold: true, align: "left", size: 10 });
+  sheet.addConditionalFormatting({
+    ref: `A${row}`,
+    rules: [
+      { type: "expression", priority: 68, formulae: [`LEFT($A$${row},1)="✔"`], style: { font: { color: { argb: C.okText }, bold: true }, fill: { type: "pattern", pattern: "solid", bgColor: { argb: C.okFill } } } },
+      { type: "expression", priority: 69, formulae: [`LEFT($A$${row},1)<>"✔"`], style: { font: { color: { argb: C.warnText }, bold: true }, fill: { type: "pattern", pattern: "solid", bgColor: { argb: C.warnFill } } } }
+    ]
+  });
 
   row += 2;
   heading(sheet, row, "Pemeriksaan aturan", lastColumn);
@@ -823,7 +833,8 @@ function adminSheet(workbook, result, { inputFile, historyLabel, manualChanges =
     ["Urutan giliran Shift 3 awal bulan", result.nightQueue.start.map((id) => names.get(id) ?? id).join(" → ")],
     ["Urutan giliran Shift 3 bulan depan", result.nightQueue.afterMonth.map((id) => names.get(id) ?? id).join(" → ")],
     ["Perbaikan otomatis (tukar jadwal atau ubah satu hari)", `${result.search.localSwaps} kali`],
-    ["Percobaan pencarian", (result.search.portfolio?.length ?? 1) > 1 ? `${result.search.portfolio.length} percobaan, dipilih nomor ${result.search.chosenVariant} (skor ${result.search.portfolio.map((item) => item.score).join(" / ")}; makin kecil makin baik)` : "1 (normal)"],
+    ["Percobaan pencarian", (result.search.portfolio?.length ?? 1) > 1 ? `${result.search.portfolio.length} percobaan${result.search.perfect?.rounds ? ` (termasuk ${result.search.perfect.rounds} putaran terarah)` : ""}, dipilih nomor ${result.search.chosenVariant} (skor ${result.search.portfolio.map((item) => item.score ?? "gagal").join(" / ")}; makin kecil makin baik)` : "1 (normal)"],
+    ["Hasil sempurna", result.search.perfect ? (result.search.perfect.reached ? "Ya" : `Belum: ${[...result.search.perfect.remaining, ...(result.search.perfect.wlbLow ? [`${result.search.perfect.wlbLow} orang skor kerja–hidup < 65`] : [])].join(", ")}`) : "Tidak dinilai (pencarian cepat)"],
     ["Waktu proses", `${Math.round(result.search.runtimeMs / 1000)} detik`]
   ];
   let row = 4;

@@ -163,7 +163,8 @@ test("updating in best mode also tries a lighter and a stronger 'keep' setting",
   await buatRoster({ root, monthKey: "2026-10", online: false });
   await appendRequest(paths.inputWorkbook, { name: "Willy", from: "2026-10-20", to: "2026-10-21", kind: "Cuti" });
   const done = await buatRoster({ root, monthKey: "2026-10", online: false, force: true, keep: true, best: true, now: new Date("2026-10-15T08:00:00") });
-  assert.equal(done.result.search.portfolio.length, 8, "6 search variants + 2 keep strengths");
+  assert.equal(done.result.search.portfolio.filter((entry) => entry.round === 0).length, 8, "6 search variants + 2 keep strengths");
+  assert.ok(done.result.search.portfolio.filter((entry) => entry.round > 0).every((entry) => entry.aim?.length), "any extra attempt says what it aimed at");
   assert.equal(done.result.audit.ok, true);
 });
 

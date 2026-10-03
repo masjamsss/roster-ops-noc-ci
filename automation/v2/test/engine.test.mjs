@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import os from "node:os";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { DEFAULT_PORTFOLIO, DEFAULT_RULES, DEFAULT_TEAM, makeConfig } from "../src/defaults.mjs";
@@ -94,9 +95,11 @@ test("best-result mode: several search variants, all scored the same way, the be
   const single = await run({ beamWidth: 800 });
   const best = await run({ beamWidth: 800, portfolio: [{}, { weightScale: { singleWorkDay: 0.6, isolatedOff: 0.67, shortWorkBlock: 0.5 } }, { search: { nightChoices: 3, beamScale: 1.5 } }] });
   assert.equal(best.audit.ok, true);
-  assert.equal(best.search.portfolio.length, 3, "every variant is reported");
-  // Fewest serious quality findings first (what a careful planner would reject), then the lowest score.
-  const ranked = [...best.search.portfolio].sort((a, b) => a.serious - b.serious || a.score - b.score);
+  assert.equal(best.search.portfolio.filter((entry) => entry.round === 0).length, 3, "every variant is reported");
+  assert.ok(best.search.portfolio.filter((entry) => entry.round > 0).every((entry) => entry.aim?.length), "extra attempts (not perfect yet) say what they aimed at");
+  // Fewest serious quality findings first (what a careful planner would reject),
+  // then fewest people with a work-life score below 65, then the lowest score.
+  const ranked = best.search.portfolio.filter((entry) => !entry.failed).sort((a, b) => a.serious - b.serious || a.wlbLow - b.wlbLow || a.score - b.score);
   assert.equal(best.search.chosenVariant, ranked[0].variant);
   assert.equal(best.search.finalScore, ranked[0].score);
   assert.equal(best.quality.serious, ranked[0].serious, "the chosen roster's own review matches");
@@ -180,7 +183,11 @@ test("best-result variants run in parallel on several CPU cores with exactly the
   assert.deepEqual(parallel.search.portfolio, sequential.search.portfolio);
   assert.equal(parallel.search.chosenVariant, sequential.search.chosenVariant);
   assert.deepEqual(parallel.schedule, sequential.schedule);
-  assert.ok(parallel.search.workers > 1, `ran on ${parallel.search.workers} workers`);
+  // At most half the cores: a 2-core PC (like GitHub's Windows runner for private
+  // repositories) runs the attempts one after another, with the same result.
+  const cores = typeof os.availableParallelism === "function" ? os.availableParallelism() : os.cpus().length;
+  if (cores >= 4 && os.totalmem() >= 5.6e9) assert.ok(parallel.search.workers > 1, `ran on ${parallel.search.workers} workers`);
+  else assert.equal(parallel.search.workers, 1, "small machine: one attempt at a time");
 });
 
 test("a 1-1-1 day explains, person by person, why nobody else could work", { timeout: 300_000 }, async () => {
@@ -235,4 +242,28 @@ test("3-night blocks only when forced (user, 30 Sep): a 31-day month needs just 
   assert.equal(longBlocks(forced), 1, "31 nights cannot all be 2-night blocks inside the month; one 3-night block is forced");
   const free = await generateRoster({ config: makeConfig({ year: 2026, month: 10, rules: { ...DEFAULT_RULES, longNightBlockOnlyIfNeeded: false }, search: { beamWidth: 1500 } }), calendars: noHolidays(2026), history: septemberHistory });
   assert.ok(longBlocks(free) > 1, `without the rule: ${longBlocks(free)} three-night blocks`);
+});
+
+test("not perfect yet: extra attempts aimed at what is left, then an honest report (no pretending)", { timeout: 600_000 }, async () => {
+  const requests = [
+    { memberId: "rizky", name: "Rizky", from: "2026-10-05", to: "2026-10-09", code: "S", kind: "Sakit", source: "test" },
+    { memberId: "willy", name: "Willy", from: "2026-10-05", to: "2026-10-09", code: "C", kind: "Cuti", source: "test" }
+  ];
+  const config = makeConfig({ year: 2026, month: 10, requests, search: { beamWidth: 600, portfolio: [{}, { search: { beamScale: 1.2 } }], perfectRounds: 1 } });
+  const result = await generateRoster({ config, calendars: noHolidays(2026), history: septemberHistory });
+  const perfect = result.search.perfect;
+  assert.equal(perfect.reached, false, "two men out the same week: 1-1-1 days cannot all be avoided");
+  assert.equal(perfect.rounds, 1);
+  assert.ok(perfect.tried > 2, `${perfect.tried} rosters tried`);
+  assert.ok(perfect.remaining.includes("minimal"), JSON.stringify(perfect));
+  const aimed = result.search.portfolio.filter((entry) => entry.round === 1);
+  assert.ok(aimed.length > 0 && aimed.every((entry) => entry.aim?.length), JSON.stringify(aimed));
+  assert.ok(aimed.some((entry) => entry.aim.includes("minimal")));
+  const best = result.search.portfolio.filter((entry) => !entry.failed).sort((a, b) => a.serious - b.serious || a.wlbLow - b.wlbLow || a.score - b.score)[0];
+  assert.equal(result.search.chosenVariant, best.variant, "the best roster over all rounds wins");
+});
+
+test("a quick single search does not claim to be perfect", { timeout: 300_000 }, async () => {
+  const result = await generateRoster({ config: smallConfig(), calendars: noHolidays(2027), history: emptyHistory });
+  assert.equal(result.search.perfect, null);
 });
