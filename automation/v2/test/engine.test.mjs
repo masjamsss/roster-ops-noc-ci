@@ -3,7 +3,7 @@ import os from "node:os";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { DEFAULT_PORTFOLIO, DEFAULT_RULES, DEFAULT_TEAM, makeConfig } from "../src/defaults.mjs";
-import { generateRoster } from "../src/engine.mjs";
+import { generateRoster, plannedWorkers } from "../src/engine.mjs";
 import { fairnessOffsets } from "../src/objective.mjs";
 import { rollingStats } from "../src/history.mjs";
 import { parseRosterCsv } from "../src/roster-csv.mjs";
@@ -106,6 +106,14 @@ test("best-result mode: several search variants, all scored the same way, the be
   assert.equal(best.search.portfolio[0].score, single.search.finalScore, "variant 1 is the normal search");
   assert.ok(best.quality.serious <= single.quality.serious, "never more serious findings than the normal search");
   assert.ok(Array.isArray(single.quality.findings), "every roster carries its quality review");
+});
+
+test("parallel attempts: at most half the cores and about 2.8 GB of memory each (the console's time estimate uses the same count)", () => {
+  assert.equal(plannedWorkers(6, {}, { cores: 2, memory: 8.6e9 }), 1, "GitHub's 2-core Windows runner");
+  assert.equal(plannedWorkers(6, {}, { cores: 8, memory: 8.6e9 }), 3, "this Mac");
+  assert.equal(plannedWorkers(6, {}, { cores: 16, memory: 64e9 }), 6);
+  assert.equal(plannedWorkers(6, { parallel: false }, { cores: 8, memory: 16e9 }), 1);
+  assert.equal(plannedWorkers(1, {}, { cores: 8, memory: 16e9 }), 1);
 });
 
 test("the default best-result portfolio: the normal search first, then 5 variants relative to the settings", () => {

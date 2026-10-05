@@ -8,6 +8,8 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { buatRoster, cekRoster, nextMonthKey, perbaruiHariLibur, periksaSistem, previewRoster, siapkanData } from "./src/app.mjs";
 import { appendMember, appendRequest, readInputWorkbook, REQUEST_KINDS } from "./src/input-workbook.mjs";
+import { DEFAULT_PORTFOLIO } from "./src/defaults.mjs";
+import { plannedWorkers } from "./src/engine.mjs";
 import { addDays, isoDate, monthBounds, parseMonthKey } from "./src/date-utils.mjs";
 import { parseTanggal } from "./src/console-input.mjs";
 import { needsPlainText, plainText } from "./src/console-text.mjs";
@@ -46,7 +48,7 @@ function usage() {
     "        [--tanpa-riwayat]  mulai tanpa roster bulan lalu (semua dianggap baru libur)",
     "        [--tidak-buka]     jangan buka file Excel setelah selesai",
     "        [--cepat]          satu percobaan saja (lebih cepat, untuk uji coba). Bawaan: 6 percobaan paralel,",
-    "                           dipilih yang paling sedikit temuan penting (sekitar 1-2 menit)",
+    "                           dipilih yang paling sedikit temuan penting (1-3 menit; di laptop 2 inti 5-10 menit)",
     "        [--pertahankan]    perbarui roster yang sudah ada: jadwal lama dipertahankan sebisa mungkin",
     "                           (untuk cuti/sakit baru); hari sebelum hari ini tidak diubah",
     "                           (tanpa ini, --paksa menyusun ulang bebas; keduanya menandai perubahan dan tidak mengubah hari yang sudah lewat)",
@@ -236,6 +238,15 @@ async function reviewBeforeBuilding(root, key, options, rl) {
 
 const YES = ["y", "ya", "yes"];
 
+// Best mode on this computer (attempts in parallel, see plannedWorkers).
+// Measured: 3 at a time 1-3 min (8-core Mac), one by one 5-8 min (2-core Windows).
+function timeEstimate() {
+  const workers = plannedWorkers(DEFAULT_PORTFOLIO.length);
+  if (workers >= 3) return "sekitar 1-3 menit";
+  if (workers === 2) return "sekitar 3-6 menit";
+  return "di komputer ini sekitar 5-10 menit; biarkan jendela ini terbuka";
+}
+
 // The month already exists: confirm, then ask how to rebuild it. `confirmed`:
 // the admin already said yes (menu 8 after a new request), so a plain "it exists"
 // needs no second question and the old plan is kept.
@@ -274,7 +285,7 @@ async function runBuat(root, options, rl, { confirmed = false } = {}) {
   if (options.mulai && !/^\d{4}-\d{2}-\d{2}$/.test(options.mulai)) throw new RosterError(`Tanggal --mulai "${options.mulai}" harus berformat TAHUN-BULAN-TANGGAL, contoh 2026-10-06.`);
   const base = { root, monthKey: key, online: !options.offline, withoutHistory: Boolean(options["tanpa-riwayat"]), best: !options.cepat, from: options.mulai ?? null };
   let { keep, lockManual, force } = { keep: Boolean(options.pertahankan), lockManual: Boolean(options["kunci-manual"]), force: Boolean(options.paksa) };
-  if (base.best) console.log("Mencari susunan terbaik: beberapa percobaan sekaligus, dipilih yang paling sedikit temuan penting (sekitar 1-2 menit).");
+  if (base.best) console.log(`Mencari susunan terbaik: beberapa percobaan, dipilih yang paling sedikit temuan penting (${timeEstimate()}).`);
   console.log(`\nMembuat roster ${monthLabel(key)}...`);
   let done;
   for (;;) {

@@ -302,15 +302,18 @@ export function prepareMonth({ config, calendars, history }) {
   return { nightId, shiftIds, ctx, bounds, horizonEnd, horizonDates, days, members, window, historyCodes, fixed, initialStates, initialQueue, env, publishedDays, variants, input };
 }
 
+// How many attempts run at the same time. Measured on an 8-core, 8.6 GB Mac:
+// 1 worker 151 s, 2 80 s, 3 60 s, 5 103 s (memory pressure). So: about 2.8 GB
+// per worker and at most half the cores. The console uses it for its time estimate.
+export function plannedWorkers(count, search = {}, { cores = typeof os.availableParallelism === "function" ? os.availableParallelism() : os.cpus().length, memory = os.totalmem() } = {}) {
+  if (count <= 1 || search.parallel === false) return 1;
+  return Math.max(1, Math.min(count, search.workers ?? Infinity, Math.floor(cores / 2), Math.floor(memory / 2.8e9)));
+}
+
 export async function generateRoster({ config, calendars, history, onProgress }) {
   const started = Date.now();
   const { nightId, shiftIds, ctx, bounds, horizonEnd, horizonDates, days, members, window, historyCodes, fixed, initialStates, initialQueue, env, publishedDays, variants, input } = prepareMonth({ config, calendars, history });
-  const cores = typeof os.availableParallelism === "function" ? os.availableParallelism() : os.cpus().length;
-  const workers = variants.length > 1 && config.search.parallel !== false
-    // Measured on an 8-core, 8.6 GB Mac: 1 worker 151 s, 2 80 s, 3 60 s, 5 103 s
-    // (memory pressure). So: about 2.8 GB per worker and at most half the cores.
-    ? Math.max(1, Math.min(variants.length, config.search.workers ?? Infinity, Math.floor(cores / 2), Math.floor(os.totalmem() / 2.8e9)))
-    : 1;
+  const workers = plannedWorkers(variants.length, config.search);
   const runAll = async (list, step) => {
     const fractions = list.map(() => 0);
     const progressOf = (index) => (done, total) => {
