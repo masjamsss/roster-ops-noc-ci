@@ -168,3 +168,39 @@ test("double validation understands 'Hindari Shift X': the Excel agrees with the
   workbook.getWorksheet("Pemeriksaan").eachRow((row) => row.eachCell((cell) => { if (/Sama|Berbeda/.test(String(cell.value?.result))) verdicts.push(cell.value.result); }));
   assert.deepEqual([...new Set(verdicts)], ["✔ Sama"]);
 });
+
+test("formulas and checks are locked against slips of the keyboard; the cells people fill in stay open; no password", async () => {
+  const { workbook } = await exported();
+  for (const sheet of workbook.worksheets) {
+    assert.equal(sheet.sheetProtection?.sheet, true, `${sheet.name} is protected`);
+    assert.equal(sheet.sheetProtection?.hashValue, undefined, `${sheet.name}: no password (Review → Unprotect Sheet)`);
+  }
+  const roster = workbook.getWorksheet("Roster");
+  const codeCell = roster.getCell(8, 3);
+  assert.equal(codeCell.protection?.locked, false, "a shift code can be swapped");
+  let lockedFormula = null;
+  roster.getRow(8).eachCell((cell) => { if (!lockedFormula && cell.value?.formula) lockedFormula = cell; });
+  assert.ok(lockedFormula, "the row has formula totals");
+  assert.notEqual(lockedFormula.protection?.locked, false, "a total is locked");
+  const summary = workbook.getWorksheet("Ringkasan");
+  let status = null;
+  summary.eachRow((row) => row.eachCell((cell) => { if (String(cell.value) === "Status roster") status = summary.getCell(cell.row, 3); }));
+  assert.equal(status?.protection?.locked, false, "the OM can set DISETUJUI");
+  let verdicts = 0;
+  workbook.getWorksheet("Pemeriksaan").eachRow((row) => row.eachCell((cell) => { if (/Sama/.test(String(cell.value?.result ?? "")) && cell.protection?.locked !== false) verdicts += 1; }));
+  assert.ok(verdicts > 20, "the double-validation verdicts are locked");
+});
+
+test("the HR table shows hours above the daily limit as a live formula that follows swaps", async () => {
+  const { workbook, result } = await exported();
+  const summary = workbook.getWorksheet("Ringkasan");
+  let header = null;
+  summary.eachRow((row) => row.eachCell((cell) => { if (/^Jam di atas 8 jam\/hari/.test(String(cell.value))) header = cell; }));
+  assert.ok(header, "column header");
+  result.members.forEach((member, index) => {
+    const cell = summary.getCell(Number(header.row) + 1 + index, Number(header.col));
+    assert.match(cell.value.formula, /Roster!/, member.name);
+    assert.equal(cell.value.result ?? 0, result.memberSummary[member.id].dailyHoursOver, member.name); // exceljs reads a cached 0 as empty
+  });
+  assert.ok(result.members.some((member) => result.memberSummary[member.id].dailyHoursOver > 0), "night workers have hours above the daily limit");
+});

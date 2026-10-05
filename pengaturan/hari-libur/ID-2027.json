@@ -5,151 +5,151 @@
   "timezone": "Asia/Jakarta",
   "status": "official-verified",
   "officialSource": {
-    "title": "Government Announces 2027 National Holidays and Collective Leave Days",
-    "url": "https://setkab.go.id/en/govt-annnounces-2027-national-holidays-and-collective-leave-days/",
+    "title": "SKB 3 Menteri: Libur Nasional dan Cuti Bersama 2027",
+    "url": "https://setneg.go.id/baca/index/inilah_skb_3_menteri_libur_nasional_dan_cuti_bersama_2027",
     "documentNumbers": [
       "1205/2026",
       "3/2026",
       "2/2026"
     ],
     "publishedDate": "2026-09-15",
-    "checkedDate": "2026-09-28",
+    "checkedDate": "2026-10-05",
     "expectedTokens": [
       "2027",
-      "National Holidays",
-      "Collective Leave"
+      "Libur Nasional",
+      "Cuti Bersama"
     ]
   },
   "days": [
     {
       "date": "2027-01-01",
       "type": "national",
-      "name": "New Year 2027"
+      "name": "Tahun Baru 2027 Masehi"
     },
     {
       "date": "2027-01-05",
       "type": "national",
-      "name": "Isra Miraj"
+      "name": "Isra Mikraj Nabi Muhammad SAW"
     },
     {
       "date": "2027-02-05",
       "type": "collective_leave",
-      "name": "Collective Leave Chinese New Year"
+      "name": "Cuti Bersama Tahun Baru Imlek"
     },
     {
       "date": "2027-02-06",
       "type": "national",
-      "name": "Chinese New Year 2578"
+      "name": "Tahun Baru Imlek 2578 Kongzili"
     },
     {
       "date": "2027-03-08",
       "type": "national",
-      "name": "Nyepi 1949"
+      "name": "Hari Suci Nyepi Tahun Baru Saka 1949"
     },
     {
       "date": "2027-03-09",
       "type": "collective_leave",
-      "name": "Collective Leave Eid al-Fitr"
+      "name": "Cuti Bersama Idulfitri"
     },
     {
       "date": "2027-03-10",
       "type": "national",
-      "name": "Eid al-Fitr 1448"
+      "name": "Idulfitri 1448 Hijriah"
     },
     {
       "date": "2027-03-11",
       "type": "national",
-      "name": "Eid al-Fitr 1448"
+      "name": "Idulfitri 1448 Hijriah"
     },
     {
       "date": "2027-03-12",
       "type": "collective_leave",
-      "name": "Collective Leave Eid al-Fitr"
+      "name": "Cuti Bersama Idulfitri"
     },
     {
       "date": "2027-03-15",
       "type": "collective_leave",
-      "name": "Collective Leave Eid al-Fitr"
+      "name": "Cuti Bersama Idulfitri"
     },
     {
       "date": "2027-03-25",
       "type": "collective_leave",
-      "name": "Collective Leave Good Friday"
+      "name": "Cuti Bersama Wafat Yesus Kristus"
     },
     {
       "date": "2027-03-26",
       "type": "national",
-      "name": "Good Friday"
+      "name": "Wafat Yesus Kristus"
     },
     {
       "date": "2027-03-28",
       "type": "national",
-      "name": "Easter"
+      "name": "Kebangkitan Yesus Kristus (Paskah)"
     },
     {
       "date": "2027-05-01",
       "type": "national",
-      "name": "International Labour Day"
+      "name": "Hari Buruh Internasional"
     },
     {
       "date": "2027-05-06",
       "type": "national",
-      "name": "Ascension of Jesus Christ"
+      "name": "Kenaikan Yesus Kristus"
     },
     {
       "date": "2027-05-17",
       "type": "national",
-      "name": "Eid al-Adha 1448"
+      "name": "Iduladha 1448 Hijriah"
     },
     {
       "date": "2027-05-18",
       "type": "collective_leave",
-      "name": "Collective Leave Eid al-Adha"
+      "name": "Cuti Bersama Iduladha"
     },
     {
       "date": "2027-05-19",
       "type": "collective_leave",
-      "name": "Collective Leave Eid al-Adha"
+      "name": "Cuti Bersama Hari Raya Waisak"
     },
     {
       "date": "2027-05-20",
       "type": "national",
-      "name": "Vesak Day 2571"
+      "name": "Hari Raya Waisak 2571 BE"
     },
     {
       "date": "2027-06-01",
       "type": "national",
-      "name": "Pancasila Day"
+      "name": "Hari Lahir Pancasila"
     },
     {
       "date": "2027-06-06",
       "type": "national",
-      "name": "Islamic New Year 1449"
+      "name": "1 Muharam Tahun Baru Islam 1449 Hijriah"
     },
     {
       "date": "2027-08-15",
       "type": "national",
-      "name": "Prophet Muhammad Birthday"
+      "name": "Maulid Nabi Muhammad SAW"
     },
     {
       "date": "2027-08-17",
       "type": "national",
-      "name": "Independence Day"
+      "name": "Proklamasi Kemerdekaan"
     },
     {
       "date": "2027-12-24",
       "type": "collective_leave",
-      "name": "Collective Leave Christmas"
+      "name": "Cuti Bersama Kelahiran Yesus Kristus"
     },
     {
       "date": "2027-12-25",
       "type": "national",
-      "name": "Christmas Day"
+      "name": "Kelahiran Yesus Kristus"
     },
     {
       "date": "2027-12-26",
       "type": "national",
-      "name": "Isra dan Mikraj Nabi Muhammad SAW"
+      "name": "Isra Mikraj Nabi Muhammad SAW"
     }
   ]
 }

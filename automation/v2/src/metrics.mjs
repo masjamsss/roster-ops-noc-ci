@@ -34,7 +34,7 @@ function shiftStart(monthStart) {
   return date.toISOString().slice(0, 10);
 }
 
-export function computeMemberSummary({ members, days, codes, historyCodes, historyDates = [], shiftIds, nightId, env, netHours = {}, weeklyHoursLimit = 40 }) {
+export function computeMemberSummary({ members, days, codes, historyCodes, historyDates = [], shiftIds, nightId, env, netHours = {}, weeklyHoursLimit = 40, dailyHoursLimit = 8 }) {
   const summary = {};
   members.forEach((member, i) => {
     const before = (d) => (d > 0 ? codes[i][d - 1] : (historyCodes[i].at(-1) ?? "-"));
@@ -59,6 +59,7 @@ export function computeMemberSummary({ members, days, codes, historyCodes, histo
       weeklyHours: [],
       weeksOverLimit: 0,
       hoursOverLimit: 0,
+      dailyHoursOver: 0,
       workTarget: 0,
       workTargetBase: 0
     };
@@ -67,6 +68,7 @@ export function computeMemberSummary({ members, days, codes, historyCodes, histo
       const code = codes[i][d];
       item.netHours += netHours[code] ?? 0;
       if (day.isHoliday) item.holidayHours += netHours[code] ?? 0;
+      item.dailyHoursOver += Math.max(0, (netHours[code] ?? 0) - dailyHoursLimit);
       if (shiftIds.includes(code)) {
         item.workDays += 1;
         item.shifts[code] += 1;
@@ -327,6 +329,13 @@ export function buildNotes({ members, days, codes, historyDates, historyCodes, i
       notes.push(`Shift 3 tidak bisa ditutup lembur saja: paling sedikit jam ${least.uncovered.map((part) => `${part.from}–${part.to}`).join(", ")} tetap kosong (lebih lama bila yang bertugas di sekitarnya tidak boleh Shift 3), jadi malam yang ditinggal harus diisi pengganti. ${noCover} dari ${nights.length} malam tidak punya pengganti dalam tim sesuai aturan. ` +
         (externalBackups.length ? `Cadangan luar tim: ${daftarNama(externalBackups.map((item) => item.name))}.` : 'Isi sheet "Cadangan Luar Tim" (Data Roster.xlsx) dengan orang yang bisa dipanggil untuk malam.'));
     }
+  }
+  // Hours above the daily limit (Shift 3 is longer than a day shift): overtime for HR.
+  const dailyLimit = config.rules.dailyHoursLimit ?? 8;
+  const longDays = members.filter((member) => summary[member.id].dailyHoursOver > 0);
+  if (longDays.length > 0) {
+    const total = longDays.reduce((sum, member) => sum + summary[member.id].dailyHoursOver, 0);
+    notes.push(`Jam kerja di atas batas ${dailyLimit} jam per hari (Shift 3 lebih panjang dari shift pagi/siang): ${total} jam bulan ini, yaitu ${daftarNama(longDays.map((member) => `${member.name} ${summary[member.id].dailyHoursOver} jam`))}. Bisa menjadi lembur harian; cek dengan HR.`);
   }
   const overWeeks = members.filter((member) => summary[member.id].weeksOverLimit > 0);
   if (overWeeks.length > 0) {

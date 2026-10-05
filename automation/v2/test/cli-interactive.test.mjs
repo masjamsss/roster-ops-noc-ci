@@ -41,8 +41,8 @@ function typeInto(root, lines) {
 
 test("menu 8: a special request ('Hindari Shift 3') is added by question and answer", { timeout: 120_000 }, async () => {
   const { root, paths } = await newRoot();
-  // 8 = request menu · 4 = Willy · 10 = Hindari Shift 3 · dates · note · Enter · 0 = exit
-  const out = await typeInto(root, ["8", "4", "10", "05/10/2026", "07/10/2026", "kuliah malam", "", "0"]);
+  // 8 = request menu · 4 = Willy · 10 = Hindari Shift 3 · dates · not weekly · note · Enter · 0 = exit
+  const out = await typeInto(root, ["8", "4", "10", "05/10/2026", "07/10/2026", "", "kuliah malam", "", "0"]);
   assert.match(out, /Ditambahkan/, out);
   const input = await readInputWorkbook(paths.inputWorkbook);
   const request = input.requests.find((item) => item.name === "Willy");
@@ -84,4 +84,35 @@ test("rebuilding a month edited by hand: the console asks to lock the edits, and
   assert.match(out, /1 perubahan manual dikunci/, out);
   const back = await readRosterWorkbook(first.files.excel);
   assert.equal(back.codesById.hilvani[back.dates.indexOf("2026-10-20")], wanted);
+});
+
+test("leave or training that breaks a rule by itself: the console offers to open Data Roster.xlsx, not a temporary member", { timeout: 120_000 }, async () => {
+  const { root, paths } = await newRoot();
+  await appendRequest(paths.inputWorkbook, { name: "Willy", from: "2026-10-17", to: "2026-10-22", kind: "Training/Dinas" });
+  const out = await typeInto(root, ["1", "y", "0", "", "0"]);
+  assert.match(out, /Willy: training\/dinas 17 Okt – 22 Okt = 6 hari kerja berturut-turut/, out);
+  assert.match(out, /Buka Data Roster\.xlsx/);
+  assert.doesNotMatch(out, /Tambah anggota sementara/);
+});
+
+test("menu 8 checks the impact first: leave that makes the month impossible is explained, and kept out unless the admin insists", { timeout: 120_000 }, async () => {
+  const { root, paths } = await newRoot();
+  for (const name of ["Rizky", "Willy"]) await appendRequest(paths.inputWorkbook, { name, from: "2026-10-13", to: "2026-10-16", kind: "Cuti" });
+  // 8 · 5 = Arman · 1 = Cuti · dates · not weekly · no note · Enter = do not save · Enter · 0
+  const out = await typeInto(root, ["8", "5", "1", "13/10/2026", "16/10/2026", "", "", "", "", "0"]);
+  assert.match(out, /TIDAK bisa disusun/, out);
+  assert.match(out, /Shift 3 tidak mungkin terisi pada Jumat, 16 Oktober 2026/);
+  assert.match(out, /Tidak disimpan/);
+  assert.equal((await readInputWorkbook(paths.inputWorkbook)).requests.filter((request) => request.name === "Arman").length, 0);
+});
+
+test("menu 8: a weekly request (an evening class every Tuesday) becomes one row per week", { timeout: 120_000 }, async () => {
+  const { root, paths } = await newRoot();
+  // 8 · 4 = Willy · 10 = Hindari Shift 3 · Tue 6 Oct · same day · weekly until 27 Oct · note · Enter · 0
+  const out = await typeInto(root, ["8", "4", "10", "06/10/2026", "", "27/10/2026", "kuliah", "", "0"]);
+  assert.match(out, /4 baris/, out);
+  const rows = (await readInputWorkbook(paths.inputWorkbook)).requests.filter((request) => request.name === "Willy");
+  assert.deepEqual(rows.map((request) => [request.from, request.to, request.code]), [
+    ["2026-10-06", "2026-10-06", "!3"], ["2026-10-13", "2026-10-13", "!3"], ["2026-10-20", "2026-10-20", "!3"], ["2026-10-27", "2026-10-27", "!3"]
+  ]);
 });

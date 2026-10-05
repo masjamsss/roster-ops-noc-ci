@@ -338,3 +338,15 @@ test("a temporary member from outside the team can be added for a few dates; a b
   await assert.rejects(appendMember(file, { name: "Doni", gender: "L", shifts: ["3"], from: "2026-10-07", to: "2026-10-07" }), /ganda|sama dengan/);
   assert.equal((await readInputWorkbook(file)).members.length, before, "the duplicate was not kept");
 });
+
+test("the Aturan sheet has the daily hours limit for the HR overtime summary (8 by default), next to the weekly one", async () => {
+  const file = await freshWorkbook();
+  assert.equal((await readInputWorkbook(file)).rules.dailyHoursLimit, 8);
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(file);
+  const row = ruleRow(workbook, "Batas jam kerja bersih per hari");
+  assert.equal(row, ruleRow(workbook, "Batas jam kerja bersih per minggu") + 1);
+  assert.deepEqual(workbook.getWorksheet(INPUT_LAYOUT.rules.sheet).getCell(row, 2).dataValidation.formulae, [6, 12]);
+  await edit(file, (book) => (book.getWorksheet(INPUT_LAYOUT.rules.sheet).getCell(ruleRow(book, "Batas jam kerja bersih per hari"), 2).value = 7));
+  assert.equal((await readInputWorkbook(file)).rules.dailyHoursLimit, 7, "the 6-day scheme");
+});

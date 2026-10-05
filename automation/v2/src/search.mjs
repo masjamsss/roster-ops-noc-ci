@@ -94,7 +94,7 @@ function withoutName(reason, name) {
   return reason.startsWith(`${name} `) ? reason.slice(name.length + 1) : reason;
 }
 
-function diagnoseDeadEnd({ node, day, fixedToday, fixedTomorrow, members, ctx, config, memberById, indexById }) {
+export function diagnoseDeadEnd({ node, day, fixedToday, fixedTomorrow, members, ctx, config, memberById, indexById }) {
   const states = { get: (id) => node.states[indexById.get(id)] };
   const nightId = ctx.nightShiftId;
   const lines = [];

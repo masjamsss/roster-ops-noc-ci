@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import ExcelJS from "exceljs";
-import { buatRoster, cekRoster, nextMonthKey, periksaSistem, previewRoster, siapkanData } from "../src/app.mjs";
+import { buatRoster, cekDampakPermintaan, cekRoster, nextMonthKey, periksaSistem, previewRoster, siapkanData } from "../src/app.mjs";
 import { appendRequest } from "../src/input-workbook.mjs";
 import { INPUT_LAYOUT } from "../src/input-workbook.mjs";
 import { monthFiles, workspacePaths } from "../src/workspace.mjs";
@@ -234,4 +234,35 @@ test("lock the manual edits: the console is told how many there are, and a newer
   assert.equal(filled.result.schedule.hilvani["2026-10-15"], "1");
   assert.equal(filled.locked, 0);
   assert.ok(filled.warnings.some((warning) => /1 perubahan manual tidak dikunci/.test(warning)), filled.warnings.join("\n"));
+});
+
+test("before leave is saved, its impact is checked: still possible, or why not", { timeout: 120_000 }, async () => {
+  const { root, paths } = await newRoot();
+  await siapkanData({ root });
+  for (const name of ["Rizky", "Willy"]) await appendRequest(paths.inputWorkbook, { name, from: "2026-10-13", to: "2026-10-16", kind: "Cuti" });
+  const fine = await cekDampakPermintaan({ root, request: { memberId: "hilvani", name: "Hilvani", from: "2026-10-20", to: "2026-10-21", code: "C", kind: "Cuti" } });
+  assert.deepEqual(fine.map((item) => [item.key, item.ok]), [["2026-10", true]]);
+  const started = Date.now();
+  const blocked = await cekDampakPermintaan({ root, request: { memberId: "arman", name: "Arman", from: "2026-10-13", to: "2026-10-16", code: "C", kind: "Cuti" } });
+  assert.equal(blocked[0].ok, false);
+  assert.match(blocked[0].reason, /Shift 3 tidak mungkin terisi/);
+  assert.equal(blocked[0].date, "2026-10-16");
+  assert.ok(Date.now() - started < 10_000, "an answer within seconds");
+  const unknown = await cekDampakPermintaan({ root, request: { memberId: "arman", name: "Arman", from: "2026-12-01", to: "2026-12-02", code: "C", kind: "Cuti" } });
+  assert.equal(unknown[0].ok, null, "December cannot be checked before November exists");
+  assert.match(unknown[0].reason, /belum bisa dicek/);
+});
+
+test("the readiness check also reminds: no backups outside the team, next month not made after the 20th, this month not approved yet", { timeout: 300_000 }, async () => {
+  const { root } = await newRoot();
+  await siapkanData({ root });
+  await buatRoster({ root, monthKey: "2026-10", online: false });
+  const late = await periksaSistem({ root, now: new Date("2026-10-22T08:00:00") });
+  const text = late.items.map((item) => `${item.level}: ${item.text}`).join("\n");
+  assert.match(text, /perhatian: Sheet Cadangan Luar Tim masih kosong/);
+  assert.match(text, /perhatian: Roster November 2026 belum dibuat/);
+  assert.match(text, /perhatian: Roster Oktober 2026 belum disetujui/);
+  assert.equal(late.ok, true, "reminders, not problems");
+  const early = await periksaSistem({ root, now: new Date("2026-10-05T08:00:00") });
+  assert.ok(!early.items.some((item) => /November 2026 belum dibuat/.test(item.text)), "before the 20th it is not due yet");
 });

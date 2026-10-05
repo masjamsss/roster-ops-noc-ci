@@ -6,7 +6,7 @@ import path from "node:path";
 import process from "node:process";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
-import { buatRoster, cekRoster, nextMonthKey, perbaruiHariLibur, periksaSistem, previewRoster, siapkanData } from "./src/app.mjs";
+import { buatRoster, cekDampakPermintaan, cekRoster, nextMonthKey, perbaruiHariLibur, periksaSistem, previewRoster, siapkanData } from "./src/app.mjs";
 import { appendMember, appendRequest, readInputWorkbook, REQUEST_KINDS } from "./src/input-workbook.mjs";
 import { DEFAULT_PORTFOLIO } from "./src/defaults.mjs";
 import { plannedWorkers } from "./src/engine.mjs";
@@ -96,7 +96,7 @@ function openPath(target) {
 function progressPrinter(label) {
   const tty = process.stdout.isTTY;
   let lastPercent = -1;
-  return ({ step, done, total, round, rounds }) => {
+  return ({ step, done, total, round, rounds, budgetMs }) => {
     if (step === "perfect") {
       console.log(`  Belum sempurna, mencari lagi dengan percobaan terarah (putaran ${round} dari ${rounds})...`);
       lastPercent = -1;
@@ -111,6 +111,8 @@ function progressPrinter(label) {
         console.log(`  Menyusun roster ${label}: ${percent}%`);
         lastPercent = percent;
       }
+    } else if (step === "exhaustive") {
+      console.log(`  Semua percobaan biasa buntu (bulan ini sangat ketat). Memeriksa semua kemungkinan, paling lama ${Math.round((budgetMs ?? 120000) / 60000)} menit...`);
     } else if (step === "improve") console.log("  Merapikan hasil...");
     else if (step === "check") console.log("  Memeriksa semua aturan...");
   };
@@ -163,6 +165,7 @@ function printBuat(root, done) {
       console.log(`   Hasil      : terbaik dari ${perfect.tried} susunan${extra}; belum sempurna karena ${left.join("; ")}. Penyebabnya dijelaskan di Ringkasan.`);
     }
   }
+  if (done.result.search?.exhaustive) console.log("   Pencarian  : bulan sangat ketat; susunan ditemukan dengan memeriksa semua kemungkinan (lihat catatan pertama)");
   const wellbeing = done.result.wellbeing;
   if (wellbeing?.team !== null && wellbeing?.team !== undefined) {
     const scored = wellbeing.members.filter((item) => item.score !== null).sort((a, b) => a.score - b.score);
@@ -322,16 +325,19 @@ async function runBuat(root, options, rl, { confirmed = false } = {}) {
 // the roster is made again. Nothing is changed without the admin's answer.
 async function rescueImpossibleDay(root, error, rl, { locked = false } = {}) {
   const date = error.details.date;
+  // A conflict inside Data Roster.xlsx itself (e.g. training longer than the
+  // work-day limit) is fixed there; more people would not help.
+  const inputOnly = Boolean(error.details.inputConflict);
   console.log(`\n✖ ${error.message}`);
   for (;;) {
     console.log("\nCara melanjutkan:");
-    console.log(`  1. Tambah anggota sementara (orang luar tim) mulai ${formatTanggal(date, { denganHari: true })}, lalu susun lagi`);
+    if (!inputOnly) console.log(`  1. Tambah anggota sementara (orang luar tim) mulai ${formatTanggal(date, { denganHari: true })}, lalu susun lagi`);
     console.log("  2. Buka Data Roster.xlsx (geser cuti/permintaan atau ubah anggota), lalu susun lagi");
     if (locked) console.log("  3. Jangan kunci perubahan manual, lalu susun lagi");
     console.log("  0. Batal");
     const choice = await ask(rl, "Ketik nomor lalu tekan Enter: ");
     if (choice === null || choice === "0" || choice === "") return "cancel";
-    if (choice === "1") {
+    if (choice === "1" && !inputOnly) {
       if (await addTemporaryMember(root, date, rl)) return "retry";
     } else if (choice === "2") {
       openPath(workspacePaths(root).inputWorkbook);
@@ -465,12 +471,44 @@ async function runPermintaan(root, rl) {
     console.log("Tanggal akhir sebelum tanggal awal. Tidak ada yang diubah.");
     return null;
   }
+  // Weekly (an evening class every Tuesday): one row per week up to the last date.
+  const until = await readDate("Berulang setiap minggu? Ketik tanggal terakhir (contoh 29/12/2026), atau Enter saja bila tidak: ", "");
+  if (until === null) return null;
+  if (until && until < from) {
+    console.log("Tanggal terakhir pengulangan sebelum tanggal mulai. Tidak ada yang diubah.");
+    return null;
+  }
+  const length = Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000);
+  const periods = [];
+  for (let start = from; start <= (until || from); start = isoDate(addDays(start, 7))) periods.push({ from: start, to: isoDate(addDays(start, length)) });
+  if (periods.length > 60) {
+    console.log("Terlalu banyak minggu (lebih dari 60). Isi tanggal terakhir yang lebih dekat. Tidak ada yang diubah.");
+    return null;
+  }
   const note = ((await rl.question("Keterangan (boleh kosong): ")) ?? "").trim();
-  const added = await appendRequest(file, { name: who.label, from, to, kind: kind.label, note });
-  console.log(`✔ Ditambahkan di Data Roster.xlsx (sheet Cuti & Permintaan, baris ${added.row}): ${added.name}, ${added.kind}, ${formatTanggal(from, { denganHari: true })}${to !== from ? ` – ${formatTanggal(to, { denganHari: true })}` : ""}.`);
+  // Before saving: can the month(s) still be made with this? (seconds, not minutes)
+  console.log("Mengecek apakah roster masih bisa disusun dengan permintaan ini...");
+  const impact = await cekDampakPermintaan({ root, requests: periods.map((period) => ({ memberId: who.member.id, name: who.label, ...period, code: kind.code, kind: kind.label, note })) });
+  for (const item of impact) {
+    if (item.ok === true) console.log(`  ✔ ${item.label}: masih bisa disusun, semua aturan bisa dipenuhi.`);
+    else if (item.ok === false) console.log(`  ✖ ${item.label}: dengan permintaan ini roster TIDAK bisa disusun. ${item.reason}`);
+    else console.log(`  ! ${item.label}: ${item.reason}`);
+  }
+  if (impact.some((item) => item.ok === false)) {
+    const insist = await ask(rl, "Tetap simpan? Ketik y bila tetap disimpan (misalnya akan ditambah orang luar tim), atau Enter untuk batal: ");
+    if (!YES.includes(insist ?? "")) {
+      console.log("Tidak disimpan. Tidak ada yang diubah.");
+      return null;
+    }
+  }
+  let added = null;
+  for (const period of periods) added = await appendRequest(file, { name: who.label, from: period.from, to: period.to, kind: kind.label, note });
+  const span = (period) => `${formatTanggal(period.from, { denganHari: true })}${period.to !== period.from ? ` – ${formatTanggal(period.to, { denganHari: true })}` : ""}`;
+  if (periods.length === 1) console.log(`✔ Ditambahkan di Data Roster.xlsx (sheet Cuti & Permintaan, baris ${added.row}): ${added.name}, ${added.kind}, ${span(periods[0])}.`);
+  else console.log(`✔ Ditambahkan ${periods.length} baris di Data Roster.xlsx (sheet Cuti & Permintaan): ${added.name}, ${added.kind}, setiap minggu dari ${span(periods[0])} sampai ${span(periods.at(-1))}.`);
   if (from < todayIso) console.log("  Catatan: tanggal yang sudah lewat tidak diubah saat roster disusun ulang. Catat langsung di file roster, lalu jalankan menu 3 (Cek roster).");
   // Rebuild the months that already have a roster (an update: only what is needed changes).
-  const keys = [...new Set([from, to].map((date) => date.slice(0, 7)))];
+  const keys = [...new Set(periods.flatMap((period) => [period.from, period.to]).map((date) => date.slice(0, 7)))];
   for (const key of keys) {
     const exists = await loadMonthCodes(workspacePaths(root), key).then(() => true, () => false);
     if (!exists) {

@@ -125,6 +125,13 @@ test("a short sickness with its own night-free period: the roster follows it and
   assert.ok(!["2026-10-15", "2026-10-16"].some((date) => result.schedule.rizky[date] === "3"));
 });
 
+test("hours above the daily limit (a night is 9 net hours, the 5-day scheme allows 8) are counted per person for HR", { timeout: 300_000 }, async () => {
+  const result = await generateRoster({ config: makeConfig({ year: 2026, month: 10, search: { beamWidth: 1500 } }), calendars: noHolidays(2026), history: septemberHistory });
+  const nights = (id) => Object.values(result.schedule[id]).filter((code) => code === "3").length;
+  for (const member of result.members) assert.equal(result.memberSummary[member.id].dailyHoursOver, nights(member.id), member.name);
+  assert.ok(result.notes.some((note) => /di atas batas 8 jam per hari/.test(note)), result.notes.join("\n"));
+});
+
 test("the default best-result portfolio: the normal search first, then 5 variants relative to the settings", () => {
   assert.equal(DEFAULT_PORTFOLIO.length, 6);
   assert.deepEqual(DEFAULT_PORTFOLIO[0], {});

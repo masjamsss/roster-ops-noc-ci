@@ -5,7 +5,8 @@ import { auditTimeline } from "./audit.mjs";
 import { addMonths, isWeekend, monthBounds, monthKey as toMonthKey, parseMonthKey } from "./date-utils.mjs";
 import { buildDays } from "./days.mjs";
 import { DEFAULT_PORTFOLIO } from "./defaults.mjs";
-import { generateRoster } from "./engine.mjs";
+import { generateRoster, prepareMonth } from "./engine.mjs";
+import { exhaustiveSearch, nightCoverageCheck } from "./exhaustive.mjs";
 import { explainFileError, RosterError } from "./errors.mjs";
 import { writeRosterWorkbook } from "./excel-export.mjs";
 import { resolveHolidays } from "./holiday-calendar.mjs";
@@ -86,6 +87,9 @@ export async function periksaSistem({ root, now = new Date() }) {
       const input = await readInputWorkbook(paths.inputWorkbook);
       add("ok", `Data Roster.xlsx terbaca: ${input.members.length} anggota, ${input.requests.length} baris cuti/permintaan.`);
       if (upgraded.length) add("perhatian", upgradeNote(upgraded));
+      if (!input.externalBackups?.length) {
+        add("perhatian", "Sheet Cadangan Luar Tim masih kosong: bila petugas Shift 3 sakit mendadak, tidak ada pengganti (malam tidak bisa ditutup lembur saja). Isi 2–3 orang di luar tim yang bisa Shift 3.");
+      }
     } catch (error) {
       add("masalah", error instanceof RosterError ? error.message : `Data Roster.xlsx tidak bisa dibaca: ${error.message}`);
     }
@@ -98,6 +102,18 @@ export async function periksaSistem({ root, now = new Date() }) {
     add("ok", `Roster ${monthLabel(previousKey)} ada (sambungan untuk ${monthLabel(key)}).`);
     if (previous.manualChanges?.length) add("perhatian", `Roster ${monthLabel(previousKey)} diubah manual (${previous.manualChanges.length} perubahan); jalankan menu 3 (Cek roster) bila belum.`);
   } else add("masalah", `Roster ${monthLabel(previousKey)} belum ada di folder hasil/${previousKey}, padahal ${monthLabel(key)} melanjutkan darinya. Buat roster ${monthLabel(previousKey)} dulu.`);
+
+  // Timing: next month's roster around the 20th (time for the OM and the team),
+  // and this month's roster approved by the OM.
+  const thisMonth = toMonthKey(now.getFullYear(), now.getMonth() + 1);
+  const comingMonth = addMonths(thisMonth, 1);
+  if (now.getDate() >= 20 && !(await loadMonthCodes(paths, comingMonth).catch(() => null))) {
+    add("perhatian", `Roster ${monthLabel(comingMonth)} belum dibuat. Sebaiknya dibuat sekitar tanggal 20 agar OM sempat menyetujui dan tim tahu jadwalnya.`);
+  }
+  const current = await loadMonthCodes(paths, thisMonth).catch(() => null);
+  if (current?.source === "excel" && current.approval !== "DISETUJUI") {
+    add("perhatian", `Roster ${monthLabel(thisMonth)} belum disetujui OM (status ${current.approval || "DRAF"}). Setelah OM setuju, ubah "Status roster" di sheet Ringkasan menjadi DISETUJUI.`);
+  }
 
   const { year } = parseMonthKey(key);
   for (const holidayYear of [year, year + 1]) {
@@ -213,6 +229,65 @@ function ruleChoiceLines(rules) {
   ];
 }
 
+// The month's current roster (manual swaps included) becomes the reference of an
+// update: every changed cell is listed, and days before `from` (default today)
+// were already worked and stay exactly as they are. `keep` also prefers the old
+// plan; without it the rest of the month is rebuilt freely.
+function useCurrentRoster(config, current, { key, label, keep, from, now }) {
+  config.reference = Object.fromEntries(Object.keys(current.codesById).map((id) => [id, Object.fromEntries(current.dates.map((date, index) => [date, current.codesById[id][index]]))]));
+  config.referenceMode = keep ? "keep" : "rebuild";
+  if (!keep) config.weights = { ...config.weights, changeFromReference: 0 };
+  const pad = (value) => String(value).padStart(2, "0");
+  const start = from ?? `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const { start: monthStart, end: monthEnd } = monthBounds(parseMonthKey(key).year, parseMonthKey(key).month);
+  if (start > monthEnd) throw new RosterError(`Roster ${label} sudah lewat semua (tanggal mulai ${start}). Perubahan untuk hari yang sudah lewat dicatat langsung di file roster, lalu jalankan "Cek roster".`);
+  config.freezeBefore = start > monthStart ? start : null;
+}
+
+// Before a leave or request is saved (menu 8): can each month it touches still be
+// made? Uses the quick coverage proof and, if needed, a short complete search;
+// it only answers possible / not possible (and why), the roster itself is made later.
+export async function cekDampakPermintaan({ root, request, requests = [request], now = new Date(), budgetMs = 20_000 }) {
+  const paths = workspacePaths(root);
+  const input = await readInputWorkbook(paths.inputWorkbook);
+  const advanced = await readAdvanced(paths);
+  const keys = [...new Set(requests.flatMap((item) => [item.from.slice(0, 7), item.to.slice(0, 7)]))].sort();
+  const results = [];
+  for (const key of keys) {
+    const label = monthLabel(key);
+    const unsure = (reason) => results.push({ key, label, ok: null, reason });
+    try {
+      const config = buildConfig({ input, advanced, monthKey: key });
+      config.requests.push(...requests.map((item) => ({ ...item, source: "Permintaan baru" })));
+      const current = await loadMonthCodes(paths, key).catch(() => null);
+      if (current) useCurrentRoster(config, current, { key, label, keep: true, from: null, now });
+      let history;
+      try {
+        history = await buildHistory(paths, key);
+      } catch (error) {
+        if (!(error instanceof RosterError)) throw error;
+        unsure(`belum bisa dicek: ${error.message.split("\n")[0]}`);
+        continue;
+      }
+      const holidays = await resolveHolidays({ years: horizonYears(key, config.period.lookaheadDays), directory: paths.holidaysDir, online: false, now });
+      const { input: month } = prepareMonth({ config, calendars: holidays.calendars, history });
+      const proof = nightCoverageCheck(month);
+      if (!proof.ok) {
+        results.push({ key, label, ok: false, reason: proof.reason, date: proof.date });
+        continue;
+      }
+      const found = exhaustiveSearch(month, { budgetMs });
+      if (found.status === "found") results.push({ key, label, ok: true });
+      else if (found.status === "impossible") results.push({ key, label, ok: false, reason: `Tidak ada susunan yang memenuhi semua aturan; susunan mana pun berhenti paling lambat pada ${formatTanggal(found.deepest.date, { denganHari: true })}.`, date: found.deepest.date });
+      else unsure("belum bisa dipastikan dalam waktu pengecekan; hasil pastinya terlihat saat roster dibuat.");
+    } catch (error) {
+      if (!(error instanceof RosterError)) throw error;
+      results.push({ key, label, ok: false, reason: error.message.split("\n")[0], date: error.details?.date });
+    }
+  }
+  return results;
+}
+
 export async function buatRoster({ root, monthKey, force = false, online = true, withoutHistory = false, best = false, keep = false, from = null, lockManual = false, onProgress, fetchImpl, now = new Date() }) {
   const paths = workspacePaths(root);
   const prepared = await siapkanData({ root });
@@ -282,16 +357,8 @@ export async function buatRoster({ root, monthKey, force = false, online = true,
     if (locked) warnings.push(`${locked} perubahan manual dikunci; sisa jadwal disusun di sekitarnya.`);
     if (unlocked) warnings.push(`${unlocked} perubahan manual tidak dikunci karena di tanggal itu sudah ada cuti atau permintaan baru di Data Roster.xlsx (yang baru dipakai).`);
   }
-  if (current) {
-    config.reference = Object.fromEntries(Object.keys(current.codesById).map((id) => [id, Object.fromEntries(current.dates.map((date, index) => [date, current.codesById[id][index]]))]));
-    config.referenceMode = keep ? "keep" : "rebuild";
-    if (!keep) config.weights = { ...config.weights, changeFromReference: 0 };
-    const pad = (value) => String(value).padStart(2, "0");
-    const start = from ?? `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-    const { start: monthStart, end: monthEnd } = monthBounds(parseMonthKey(key).year, parseMonthKey(key).month);
-    if (start > monthEnd) throw new RosterError(`Roster ${label} sudah lewat semua (tanggal mulai ${start}). Perubahan untuk hari yang sudah lewat dicatat langsung di file roster, lalu jalankan "Cek roster".`);
-    config.freezeBefore = start > monthStart ? start : null;
-  } else if (keep) warnings.push(`Roster ${label} belum ada, jadi dibuat dari awal.`);
+  if (current) useCurrentRoster(config, current, { key, label, keep, from, now });
+  else if (keep) warnings.push(`Roster ${label} belum ada, jadi dibuat dari awal.`);
   // Best-result mode: the normal search plus variants; the roster with the fewest
   // serious quality findings (then the best score) wins. When updating, also a
   // lighter and a stronger "keep the old roster" setting.

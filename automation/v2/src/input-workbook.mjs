@@ -42,6 +42,7 @@ const RULE_ROWS = Object.freeze([
   { key: "balanceDayOnlyShifts", label: "Seimbangkan Shift 1 dan Shift 2 untuk yang tidak boleh Shift 3", kind: "yesno", explain: "Ya = kira-kira separuh Shift 1 dan separuh Shift 2 setiap bulan." },
   { key: "breakHours", label: "Istirahat tidak dibayar per shift (jam)", min: 0, max: 2, optional: true, explain: "Dipakai untuk menghitung jam kerja bersih. Contoh: Shift 1 07:00-16:00 dengan istirahat 1 jam = 8 jam kerja." },
   { key: "weeklyHoursLimit", label: "Batas jam kerja bersih per minggu", min: 35, max: 48, optional: true, explain: "Senin-Minggu. Roster berusaha tidak melewati batas ini; kelebihannya dilaporkan untuk HR (bisa menjadi lembur)." },
+  { key: "dailyHoursLimit", label: "Batas jam kerja bersih per hari (rekap lembur HR)", min: 6, max: 12, optional: true, explain: "Hanya untuk laporan HR, tidak mengubah roster. 8 = skema 5 hari kerja (8 jam sehari, 40 jam seminggu); 7 = skema 6 hari kerja. Shift 3 = 9 jam bersih, jadi setiap malam ada 1 jam di atas 8 jam yang bisa menjadi lembur." },
   { key: "nightFreeDaysAfterSick", label: "Hari tanpa Shift 3 setelah sakit lama (3 hari atau lebih)", aliases: ["Hari tanpa Shift 3 setelah sakit"], min: 0, max: 14, optional: true, explain: "Setelah sakit 3 hari atau lebih berturut-turut (misalnya rawat inap), orang itu mulai lagi dengan shift pagi/siang: tidak Shift 3 selama sekian hari, dihitung dari hari sakit terakhir. 0 = tanpa aturan ini." },
   { key: "nightFreeDaysAfterShortSick", label: "Hari tanpa Shift 3 setelah sakit singkat (1–2 hari)", min: 0, max: 14, optional: true, explain: "Untuk sakit 1–2 hari berturut-turut (misalnya flu). Isi sama dengan baris di atas bila tidak ingin dibedakan. Saran pengelola: 2. Tidak boleh lebih besar dari baris di atas." },
   { key: "overtimeHours", label: "Lembur maksimal per orang untuk menutup yang berhalangan (jam)", min: 0, max: 6, optional: true, explain: "Untuk rencana di sheet Cadangan: shift sebelumnya boleh pulang lebih lambat dan/atau shift berikutnya datang lebih awal, masing-masing paling lama sekian jam. Lembur tidak pernah menggantikan satu shift penuh." },
@@ -328,6 +329,7 @@ function ruleValues(rules, shifts) {
     longNightBlockOnlyIfNeeded: rules.longNightBlockOnlyIfNeeded === false ? "Tidak" : "Ya",
     breakHours: rules.breakHours ?? 1,
     weeklyHoursLimit: rules.weeklyHoursLimit ?? 40,
+    dailyHoursLimit: rules.dailyHoursLimit ?? 8,
     overtimeHours: rules.overtimeHours ?? 4,
     nightFreeDaysAfterSick: rules.nightFreeDaysAfterSick ?? 5,
     nightFreeDaysAfterShortSick: rules.nightFreeDaysAfterShortSick ?? rules.nightFreeDaysAfterSick ?? 5,
@@ -736,7 +738,7 @@ export async function readInputWorkbook(file) {
         else parsed[rule.key] = value;
       }
     }
-    for (const key of ["maxConsecutiveWorkDays", "nightRecoveryOffDays", "minimumRestHours", "maxConsecutiveOffDays", "workDaysTarget", "balanceDayOnlyShifts", "fridayShift1Female", "leaveCountsAsWork", "longNightBlockOnlyIfNeeded", "breakHours", "weeklyHoursLimit", "overtimeHours", "nightFreeDaysAfterSick", "workDaysTargetHoursCap", "nightFreeDaysAfterShortSick"]) {
+    for (const key of ["maxConsecutiveWorkDays", "nightRecoveryOffDays", "minimumRestHours", "maxConsecutiveOffDays", "workDaysTarget", "balanceDayOnlyShifts", "fridayShift1Female", "leaveCountsAsWork", "longNightBlockOnlyIfNeeded", "breakHours", "weeklyHoursLimit", "overtimeHours", "nightFreeDaysAfterSick", "workDaysTargetHoursCap", "nightFreeDaysAfterShortSick", "dailyHoursLimit"]) {
       if (parsed[key] !== undefined) rules[key] = parsed[key];
     }
     if ((rules.nightFreeDaysAfterShortSick ?? 0) > (rules.nightFreeDaysAfterSick ?? 0)) {

@@ -189,6 +189,7 @@ function rosterSheet(workbook, result) {
         type: "list", allowBlank: true, showErrorMessage: true, errorTitle: "Kode tidak dikenal",
         error: "Pakai salah satu kode: 1, 2, 3, H, C, S, T, -", formulae: ['"1,2,3,H,C,S,T,-"']
       };
+      cell.protection = { locked: false }; // swaps are made here
     });
     const range = `${firstLetter}${rowNumber}:${lastLetter}${rowNumber}`;
     const count = (code) => `SUMPRODUCT(--(${range}&""="${code}"))`;
@@ -625,38 +626,54 @@ function summarySheet(workbook, result, L, checks) {
   row += 2;
   heading(sheet, row, "Jam kerja untuk HR", lastColumn);
   row += 1;
+  // Hours above the daily limit follow the Roster sheet (a live formula): a shift
+  // longer than the limit adds its extra hours each time it is worked.
+  const dailyLimit = result.settings.rules.dailyHoursLimit ?? 8;
+  const breakHours = result.settings.rules.breakHours ?? 1;
+  const clockOf = (text) => Number(text.slice(0, 2)) + Number(text.slice(3, 5)) / 60;
+  const netOf = (start, end) => {
+    const from = clockOf(start);
+    let to = clockOf(end);
+    if (to <= from) to += 24;
+    return Math.max(0, to - from - breakHours);
+  };
+  const extra = [...result.shifts.map((shift) => [shift.id, netOf(shift.start, shift.end)]), ["T", result.trainingWindow ? netOf(result.trainingWindow.start, result.trainingWindow.end) : 0]]
+    .map(([code, net]) => [code, Math.max(0, net - dailyLimit)]).filter(([, hours]) => hours > 0);
   sheet.mergeCells(row, 2, row, 3);
-  sheet.mergeCells(row, 4, row, 5);
   sheet.mergeCells(row, 6, row, 7);
-  sheet.mergeCells(row, 8, row, 9);
   sheet.mergeCells(row, 10, row, lastColumn);
   sheet.getCell(row, 1).value = "No";
   sheet.getCell(row, 2).value = "Nama";
   sheet.getCell(row, 4).value = "Minggu di atas batas";
-  sheet.getCell(row, 6).value = "Jam di atas batas";
+  sheet.getCell(row, 5).value = "Jam di atas batas";
+  sheet.getCell(row, 6).value = `Jam di atas ${dailyLimit} jam/hari`;
   sheet.getCell(row, 8).value = "Jam kerja di tanggal merah";
+  sheet.getCell(row, 9).value = "Jam kerja bersih";
   sheet.getCell(row, 10).value = "Jam kerja bersih per minggu (Senin–Minggu)";
-  headerCells(sheet.getRow(row), [1, 2, 4, 6, 8, 10]);
+  headerCells(sheet.getRow(row), [1, 2, 4, 5, 6, 8, 9, 10]);
   sheet.getRow(row).height = 30;
   result.members.forEach((member, index) => {
     row += 1;
     const summary = result.memberSummary[member.id];
     sheet.mergeCells(row, 2, row, 3);
-    sheet.mergeCells(row, 4, row, 5);
     sheet.mergeCells(row, 6, row, 7);
-    sheet.mergeCells(row, 8, row, 9);
     sheet.mergeCells(row, 10, row, lastColumn);
     setCell(sheet.getCell(row, 1), index + 1, { color: C.note });
     setCell(sheet.getCell(row, 2), member.name, { bold: true, align: "left" });
     const over = summary.weeksOverLimit > 0;
     setCell(sheet.getCell(row, 4), summary.weeksOverLimit, { bold: over, color: over ? C.warnText : undefined, bg: over ? C.warnFill : null });
-    setCell(sheet.getCell(row, 6), summary.hoursOverLimit, { color: over ? C.warnText : undefined });
+    setCell(sheet.getCell(row, 5), summary.hoursOverLimit, { color: over ? C.warnText : undefined });
+    const rosterRow = L.firstMemberRow + index;
+    const range = `Roster!$${columnLetter(L.firstDayColumn)}$${rosterRow}:$${columnLetter(L.lastDayColumn)}$${rosterRow}`;
+    const longFormula = extra.length ? extra.map(([code, hours]) => `SUMPRODUCT(--(${range}&""="${code}"))*${hours}`).join("+") : "0";
+    setCell(sheet.getCell(row, 6), { formula: longFormula, result: summary.dailyHoursOver ?? 0 }, { color: summary.dailyHoursOver ? C.warnText : undefined });
     setCell(sheet.getCell(row, 8), summary.holidayHours);
+    setCell(sheet.getCell(row, 9), summary.netHours);
     const weeks = summary.weeklyHours.map((week) => `${formatTanggal(week.weekStart, { pendek: true })}: ${week.hours}`).join("  ·  ");
-    setCell(sheet.getCell(row, 10), weeks, { align: "left", size: 9 });
+    setCell(sheet.getCell(row, 10), weeks, { align: "left", size: 9, wrap: true });
   });
   row += 1;
-  paragraph(sheet, row, `Jam kerja bersih = jam shift dikurangi istirahat tidak dibayar ${result.settings.rules.breakHours ?? 1} jam per shift. Batas ${limit} jam per minggu (Senin–Minggu; minggu pertama termasuk hari-hari akhir bulan lalu). Jam di atas batas dan jam kerja di tanggal merah bisa menjadi lembur — cek dengan kebijakan HR. Keduanya bisa diatur di sheet Aturan (Data Roster.xlsx).`, lastColumn, { italic: true, color: C.note, size: 9, charsPerLine: 160 });
+  paragraph(sheet, row, `Jam kerja bersih = jam shift dikurangi istirahat tidak dibayar ${result.settings.rules.breakHours ?? 1} jam per shift. Batas ${limit} jam per minggu (Senin–Minggu; minggu pertama termasuk hari-hari akhir bulan lalu) dan ${dailyLimit} jam per hari (Shift 3 lebih panjang, jadi setiap malam menambah jam di atas batas harian; kolom ini ikut berubah bila sheet Roster diubah). Jam di atas batas dan jam kerja di tanggal merah bisa menjadi lembur — cek dengan kebijakan HR. Batas dan istirahat bisa diatur di sheet Aturan (Data Roster.xlsx).`, lastColumn, { italic: true, color: C.note, size: 9, charsPerLine: 160 });
 
   // Shift 3 over the months the fairness looks at: what the OM needs to see that
   // nights and 3-night blocks even out across months (per available day).
@@ -735,6 +752,7 @@ function summarySheet(workbook, result, L, checks) {
   const statusCell = sheet.getCell(row, 3);
   setCell(statusCell, "DRAF", { bold: true, bg: "FFFFF2CC" });
   statusCell.dataValidation = { type: "list", allowBlank: false, formulae: ['"DRAF,DISETUJUI"'], showErrorMessage: true, error: "Pilih DRAF atau DISETUJUI." };
+  statusCell.protection = { locked: false };
   sheet.mergeCells(row, 5, row, lastColumn);
   setCell(sheet.getCell(row, 5), "Ganti menjadi DISETUJUI setelah Operations Manager menyetujui. Status ini ikut tampil di sheet Roster.", { size: 9, italic: true, color: C.note, align: "left", border: false });
   const statusAddress = `$C$${row}`;
@@ -756,7 +774,10 @@ function summarySheet(workbook, result, L, checks) {
     sheet.mergeCells(row, 8, row, 9);
     sheet.mergeCells(row, 10, row, lastColumn);
     setCell(sheet.getCell(row, 1), role, { align: "left", bold: true, wrap: true });
-    for (const column of [4, 8, 10]) setCell(sheet.getCell(row, column), "", { bg: "FFFFF2CC" });
+    for (const column of [4, 8, 10]) {
+      setCell(sheet.getCell(row, column), "", { bg: "FFFFF2CC" });
+      sheet.getCell(row, column).protection = { locked: false };
+    }
     sheet.getRow(row).height = 26;
   }
   return statusAddress;
@@ -934,6 +955,12 @@ export async function writeRosterWorkbook(result, file, options = {}) {
   holidaySheet(workbook, result, options);
   adminSheet(workbook, result, options);
   workbook.getWorksheet("Hitungan").orderNo = 1000; // hidden helper sheet goes last
+  // Formulas and checks are locked so a slip of the keyboard cannot break the
+  // totals or the double validation; the cells people fill in (shift codes, the
+  // approval block) stay open. No password: Review → Unprotect Sheet.
+  for (const sheet of workbook.worksheets) {
+    await sheet.protect("", { selectLockedCells: true, selectUnlockedCells: true, formatColumns: true, formatRows: true, autoFilter: true });
+  }
   await workbook.xlsx.writeFile(file);
   return file;
 }

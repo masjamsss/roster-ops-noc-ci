@@ -40,6 +40,9 @@ export const DEFAULT_RULES = Object.freeze({
   // Aturan option (5 Oct, Jamal's choice in the Excel): lower the night workers'
   // automatic target so their average week stays within weeklyHoursLimit.
   workDaysTargetHoursCap: false,
+  // Only for the HR summary (hours above it each day may be overtime): 8 in the
+  // 5-day scheme of PP 35/2021, 7 in the 6-day scheme. Does not change the roster.
+  dailyHoursLimit: 8,
   // Friday prayer coverage: at least one female agent on Shift 1 every Friday.
   fridayShift1Female: true,
   // Leave counts as a work day for the consecutive-day limit and night recovery (user, 30 Sep).

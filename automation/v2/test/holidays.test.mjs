@@ -101,3 +101,15 @@ test("differences between the official list and Google are reported for a date r
   assert.match(differences[0].message, /Google/);
   assert.equal(compareHolidayDays(official, google, "2027-06-01", "2027-06-30").length, 0);
 });
+
+test("the official holiday files the team uses are in Indonesian (they appear in the OM's Excel)", async () => {
+  const { readdir, readFile } = await import("node:fs/promises");
+  const folder = new URL("../../../pengaturan/hari-libur/", import.meta.url);
+  for (const file of (await readdir(folder)).filter((name) => /^ID-\d{4}\.json$/.test(name))) {
+    const calendar = JSON.parse(await readFile(new URL(file, folder), "utf8"));
+    if (calendar.status !== "official-verified") continue;
+    const english = calendar.days.filter((day) => /\b(Collective|Leave|Christmas|Eid|New Year|Day|Good Friday|Easter|Vesak|Ascension|Birthday)\b/i.test(day.name));
+    assert.deepEqual(english.map((day) => `${day.date} ${day.name}`), [], `${file}: names must be the Indonesian names of the SKB`);
+    for (const day of calendar.days.filter((item) => item.type === "collective_leave")) assert.match(day.name, /^Cuti Bersama /, `${file} ${day.date}`);
+  }
+});

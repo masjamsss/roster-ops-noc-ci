@@ -17,7 +17,9 @@ import { initialNightState } from "./night-rotation.mjs";
 import { fairnessOffsets, makeEnv, scoreSchedule } from "./objective.mjs";
 import { buildDayPatterns } from "./patterns.mjs";
 import { initialMemberState, isActive, transitionMember } from "./rules.mjs";
-import { describeCandidate, runVariant } from "./variant-run.mjs";
+import { describeCandidate, finishCandidate, runVariant } from "./variant-run.mjs";
+import { EXHAUSTIVE_BUDGET_MS, exhaustiveSearch, nightCoverageCheck } from "./exhaustive.mjs";
+import { diagnoseDeadEnd } from "./search.mjs";
 
 export const ENGINE_VERSION = "3.0.0";
 const HISTORY_DAYS = 21;
@@ -57,6 +59,47 @@ function historyWindow(history, monthStart, members) {
 }
 
 // Quick upper bound: can this team possibly staff the minimum every day?
+// Leave, training or requested shifts that by themselves break the work-day
+// limit (training and requested shifts count as work, leave too when the Aturan
+// sheet says so), counting on from last month on the 1st. No roster can satisfy
+// them, so they are named at once instead of after a long search.
+function checkFixedStreaks(config, members, days, fixed, initialStates) {
+  const max = config.rules.maxConsecutiveWorkDays;
+  const leaveAsWork = config.rules.leaveCountsAsWork !== false;
+  const shiftIds = new Set(config.shifts.map((shift) => shift.id));
+  members.forEach((member, i) => {
+    let run = 0;
+    let first = 0;
+    days.forEach((day, d) => {
+      const code = fixed[d][member.id];
+      const work = code === "T" || shiftIds.has(code);
+      if (!(work || (code === "C" && leaveAsWork))) {
+        run = 0;
+        return;
+      }
+      if (run === 0) {
+        first = d;
+        run = d === 0 ? initialStates[i].workStreak : 0;
+      }
+      run += 1;
+      if (!work || run <= max) return;
+      // Days before `freezeBefore` (update mode) were already worked, not asked for.
+      const label = (offset) => {
+        const fixedCode = fixed[first + offset][member.id];
+        if (config.freezeBefore && days[first + offset].date < config.freezeBefore && !["T", "C"].includes(fixedCode)) return "jadwal yang sudah dijalani";
+        return ({ T: "training/dinas", C: "cuti" })[fixedCode] ?? `minta ${KODE_LABEL[fixedCode]}`;
+      };
+      const names = [...new Set(days.slice(first, d + 1).map((_, offset) => label(offset)))];
+      throw new RosterError(
+        `${member.name}: ${names.join(", ")} ${formatTanggal(days[first].date, { pendek: true })} – ${formatTanggal(day.date, { pendek: true })}` +
+          `${first === 0 && initialStates[i].workStreak ? ` (sambungan ${initialStates[i].workStreak} hari kerja dari bulan lalu)` : ""} = ${run} hari kerja berturut-turut, padahal maksimal ${max} hari kerja berturut-turut ` +
+          `(training/dinas${leaveAsWork ? " dan cuti" : ""} dihitung hari kerja). Beri 1 hari libur di antaranya di sheet Cuti & Permintaan, atau ubah "Maksimal hari kerja berturut-turut" di sheet Aturan bila memang diizinkan.`,
+        { date: day.date, inputConflict: true }
+      );
+    });
+  });
+}
+
 function checkCapacity(config, members, days, fixed) {
   const published = days.filter((day) => day.published);
   const needed = published.reduce((sum, day) => {
@@ -262,6 +305,7 @@ export function prepareMonth({ config, calendars, history }) {
     nightChoices: config.search.nightChoices ?? 1,
     netHours: netHoursByCode(config),
     weeklyHoursLimit: config.rules.weeklyHoursLimit ?? 40,
+    dailyHoursLimit: config.rules.dailyHoursLimit ?? 8,
     reference: config.reference ?? null
   };
   const { bounds, horizonEnd, horizonDates, days } = buildDays(config, calendars);
@@ -277,6 +321,7 @@ export function prepareMonth({ config, calendars, history }) {
     ...initialMemberState(deriveMemberState(historyCodes[i], ctx), member),
     weekHours: window.dates.length ? weekHoursAtStart(historyCodes[i], bounds.start, ctx.netHours) : 0
   }));
+  checkFixedStreaks(config, members, days, fixed, initialStates);
   const nightCapable = members.filter((member) => member.eligibleShifts.includes(nightId)).map((member) => member.id);
   const initialQueue = deriveNightQueue(window.codesById, nightCapable, nightId);
   const initialNight = initialNightState(window.codesById, initialQueue, nightId);
@@ -314,6 +359,9 @@ export async function generateRoster({ config, calendars, history, onProgress })
   const started = Date.now();
   const { nightId, shiftIds, ctx, bounds, horizonEnd, horizonDates, days, members, window, historyCodes, fixed, initialStates, initialQueue, env, publishedDays, variants, input } = prepareMonth({ config, calendars, history });
   const workers = plannedWorkers(variants.length, config.search);
+  // A month the coverage proof rules out is reported at once, before any search.
+  const proof = nightCoverageCheck(input);
+  if (!proof.ok) throw new RosterError(`Roster tidak bisa disusun (sudah dipastikan): ${proof.reason}\n${ADVICE}`, { date: proof.date, proven: true });
   const runAll = async (list, step) => {
     const fractions = list.map(() => 0);
     const progressOf = (index) => (done, total) => {
@@ -334,7 +382,15 @@ export async function generateRoster({ config, calendars, history, onProgress })
   const searchStarted = Date.now();
   const outcomes = (await runAll(variants, "search")).map((outcome) => ({ ...outcome, round: 0 }));
   const firstRoundMs = Date.now() - searchStarted;
-  if (!outcomes.some((outcome) => outcome.ok)) throw outcomes[0].error;
+  // Every attempt dead-ended (very low availability): before saying the month
+  // cannot be made, make sure (exhaustive.mjs). Program errors are not dead-ends.
+  let lastResort = null;
+  if (!outcomes.some((outcome) => outcome.ok)) {
+    const deadEnd = outcomes.find((outcome) => outcome.error instanceof RosterError && outcome.error.details?.date)?.error;
+    if (!deadEnd) throw outcomes[0].error;
+    lastResort = completeSearch(input, deadEnd, config.search.exhaustiveBudgetMs ?? EXHAUSTIVE_BUDGET_MS, onProgress);
+    outcomes.push(lastResort);
+  }
   let chosenIndex = -1;
   const choose = () => outcomes.forEach((outcome, index) => {
     if (outcome.ok && betterThan(outcome.result, chosenIndex >= 0 ? outcomes[chosenIndex].result : null)) chosenIndex = index;
@@ -342,7 +398,7 @@ export async function generateRoster({ config, calendars, history, onProgress })
   choose();
   // Not perfect yet (a serious finding, or someone's work-life score below 65):
   // extra attempts aimed at what is left, up to search.perfectRounds rounds.
-  const perfectRounds = variants.length > 1 ? config.search.perfectRounds ?? 2 : 0;
+  const perfectRounds = variants.length > 1 && !lastResort ? config.search.perfectRounds ?? 2 : 0;
   let rounds = 0;
   let stoppedByTime = false;
   for (let round = 1; round <= perfectRounds && !isPerfect(outcomes[chosenIndex].result); round += 1) {
@@ -414,6 +470,9 @@ export async function generateRoster({ config, calendars, history, onProgress })
     members, days, codes, historyDates: window.dates, historyCodes, initialStates, initialQueue, nightBlocks, summary, dayRows,
     config, env, requestCount, nightId, backups, backupPlan, changes, externalBackups: config.externalBackups ?? [], minimalReasons
   });
+  if (lastResort) {
+    notes.unshift("Bulan ini sangat ketat: pencarian biasa tidak menemukan susunan, jadi program memeriksa semua kemungkinan dan memakai susunan yang memenuhi semua aturan (lalu dirapikan). Polanya bisa berat bagi beberapa orang; bila bisa, kurangi cuti atau permintaan yang bersamaan, atau tambahkan cadangan.");
+  }
   const toSchedule = (dayList) => Object.fromEntries(members.map((member, i) => [member.id, Object.fromEntries(dayList.map((day) => [day.date, codes[i][day.dayIndex]]))]));
   const widths = chosen.searchLog.map((item) => item.width);
 
@@ -446,8 +505,9 @@ export async function generateRoster({ config, calendars, history, onProgress })
     audit,
     notes,
     search: {
-      beamWidthMax: Math.max(...widths),
-      beamWidthMin: Math.min(...widths),
+      beamWidthMax: widths.length ? Math.max(...widths) : null,
+      beamWidthMin: widths.length ? Math.min(...widths) : null,
+      exhaustive: lastResort ? { found: true, ms: lastResort.ms } : null,
       searchScore: Math.round(searchScore),
       finalScore: Math.round(final.total),
       localSwaps: localLog.length,
@@ -459,6 +519,38 @@ export async function generateRoster({ config, calendars, history, onProgress })
       runtimeMs: Date.now() - started
     }
   };
+}
+
+// The last resort when every attempt dead-ended (the coverage proof already ran
+// before the search): the complete search, giving a valid roster polished like
+// any other, or certainty that none exists, or the time limit. Returns an outcome
+// like a variant's, or throws a RosterError that keeps the date for the console.
+const ADVICE = "Saran: geser salah satu cuti atau permintaan di sekitar tanggal itu, atau tambahkan orang luar tim sebagai anggota sementara (menu Buat Roster menawarkannya).";
+
+function completeSearch(input, deadEnd, budgetMs, onProgress) {
+  onProgress?.({ step: "exhaustive", budgetMs });
+  const found = exhaustiveSearch(input, { budgetMs });
+  if (found.status === "found") {
+    return { ok: true, round: 0, ms: found.ms, result: finishCandidate(input, found.codes, { nightQueueAfterMonth: found.nights[input.env.lastPublishedIndex].queue }) };
+  }
+  const { members, days, fixed, ctx, config } = input;
+  const day = days[found.deepest.dayIndex];
+  const diagnosis = diagnoseDeadEnd({
+    node: found.deepest.node, day, fixedToday: fixed[found.deepest.dayIndex], fixedTomorrow: fixed[found.deepest.dayIndex + 1] ?? {},
+    members, ctx: { ...ctx, nightChoices: Infinity }, config,
+    memberById: new Map(members.map((member) => [member.id, member])), indexById: new Map(members.map((member, index) => [member.id, index]))
+  });
+  const reasons = diagnosis.message.split("\n").filter((line) => line.startsWith("- ")).join("\n");
+  if (found.status === "impossible") {
+    throw new RosterError(
+      `Roster tidak bisa disusun (sudah diperiksa semua kemungkinan): tidak ada susunan yang memenuhi semua aturan. Susunan mana pun berhenti paling lambat pada ${formatTanggal(day.date, { denganHari: true })}.\n${reasons}\n${ADVICE}`,
+      { date: day.date, proven: true }
+    );
+  }
+  throw new RosterError(
+    `${deadEnd.message}\nPemeriksaan semua kemungkinan dihentikan setelah ${Math.round(budgetMs / 60000)} menit tanpa menemukan susunan; kemungkinan besar memang tidak bisa dengan cuti dan permintaan ini.`,
+    { ...deadEnd.details }
+  );
 }
 
 // Runs variants in a small pool of worker threads (one variant per worker).
