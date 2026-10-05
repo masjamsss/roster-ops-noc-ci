@@ -163,6 +163,23 @@ test("after sick leave, no Shift 3 for the first days back (5 by default), unles
   assert.notEqual(transitionMember(afterSick([]), man, "1", day(0), sickCtx), null, "day shifts are fine");
 });
 
+test("a short sickness (1-2 days) may have its own, shorter night-free period (Aturan row); a longer one keeps the normal period", () => {
+  const sickCtx = { ...ctx, rules: { ...ctx.rules, nightFreeDaysAfterSick: 5, nightFreeDaysAfterShortSick: 2 } };
+  const back = (history, codes, rulesCtx = sickCtx) => {
+    let state = initialMemberState(deriveMemberState(history, rulesCtx), man);
+    codes.forEach((code, index) => { state = transitionMember(state, man, code, day(index), rulesCtx).state; });
+    return state;
+  };
+  const night = (history, codes, rulesCtx = sickCtx) => transitionMember(back(history, codes, rulesCtx), man, "3", day(codes.length), rulesCtx);
+  assert.equal(night(["H", "H", "1", "1", "S"], ["1"]), null, "1 day sick: second day back, no night yet");
+  assert.notEqual(night(["H", "H", "1", "1", "S"], ["1", "1"]), null, "1 day sick: third day back, nights allowed");
+  assert.notEqual(night(["H", "1", "1", "S", "S"], ["1", "1"]), null, "2 days sick count as short");
+  assert.equal(night(["H", "S", "S", "S"], ["1", "1", "H", "1"]), null, "3 days sick: the normal 5 days");
+  assert.equal(night(["S", "S", "S", "1", "S"], ["1", "1"]), null, "a short sickness after a long one does not shorten the long one's period");
+  const plain = { ...ctx, rules: { ...ctx.rules, nightFreeDaysAfterSick: 5 } };
+  assert.equal(night(["H", "H", "1", "1", "S"], ["1", "1"], plain), null, "without the row: 5 days for any sickness, as before");
+});
+
 test("a switch between Shift 1 and Shift 2 inside a work block costs a penalty; after a day off or into nights it does not", () => {
   const strict = { ...ctx, weights: { ...WEIGHTS, dayShiftSwitchInBlock: 400 } };
   const scoresOf = (member, codes) => {

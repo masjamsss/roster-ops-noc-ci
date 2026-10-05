@@ -63,6 +63,8 @@ export function auditTimeline({ dates, codesById, members, shifts, rules, covera
   const inactive = [];
   const afterSick = [];
   const sickFree = rules.nightFreeDaysAfterSick ?? 0;
+  // A sickness of 1-2 days in a row may have its own (shorter) period.
+  const shortSickFree = rules.nightFreeDaysAfterShortSick ?? sickFree;
 
   for (const member of members) {
     const codes = codesById[member.id];
@@ -127,10 +129,20 @@ export function auditTimeline({ dates, codesById, members, shifts, rules, covera
       }
 
       if (!report) return;
-      if (code === nightId && sickFree > 0 && requestsByDate[date]?.[member.id] !== nightId) {
-        const recent = codes.slice(Math.max(0, index - sickFree), index);
-        if (recent.includes("S")) {
-          afterSick.push({ tanggal: date, anggota: name, pesan: `${name} Shift 3 tgl ${tgl(date)}, padahal baru kembali dari sakit (tanpa Shift 3 selama ${sickFree} hari).` });
+      if (code === nightId && Math.max(sickFree, shortSickFree) > 0 && requestsByDate[date]?.[member.id] !== nightId) {
+        const sickRunAt = (at) => {
+          let first = at;
+          let last = at;
+          while (first > 0 && codes[first - 1] === "S") first -= 1;
+          while (last + 1 < codes.length && codes[last + 1] === "S") last += 1;
+          return last - first + 1;
+        };
+        for (let back = 1; back <= Math.max(sickFree, shortSickFree) && index - back >= 0; back += 1) {
+          if (codes[index - back] !== "S") continue;
+          const free = sickRunAt(index - back) > 2 ? sickFree : shortSickFree;
+          if (back > free) continue;
+          afterSick.push({ tanggal: date, anggota: name, pesan: `${name} Shift 3 tgl ${tgl(date)}, padahal baru kembali dari sakit (tanpa Shift 3 selama ${free} hari).` });
+          break;
         }
       }
       if (isShift(code) && !member.eligibleShifts.includes(code)) {
@@ -160,6 +172,6 @@ export function auditTimeline({ dates, codesById, members, shifts, rules, covera
   add("maks-libur", `Tidak libur (H) lebih dari ${rules.maxConsecutiveOffDays} hari berturut-turut`, offRuns);
   add("permintaan", "Cuti, training dan permintaan dipenuhi", requests);
   add("tidak-aktif", "Anggota yang belum bergabung atau sudah keluar tidak dijadwalkan", inactive);
-  add("setelah-sakit", `Setelah sakit, tidak Shift 3 selama ${sickFree} hari (mulai dengan shift siang/pagi)`, afterSick);
+  add("setelah-sakit", `Setelah sakit, tidak Shift 3 selama ${sickFree} hari${shortSickFree !== sickFree ? ` (${shortSickFree} hari bila sakit hanya 1–2 hari)` : ""} (mulai dengan shift siang/pagi)`, afterSick);
   return { ok: checks.every((item) => item.ok), checks };
 }

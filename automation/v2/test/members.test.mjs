@@ -44,6 +44,18 @@ test("a member joining mid-month gets a share only for the days in the team", { 
   assert.ok(!result.notes.some((note) => /seharusnya Budi/.test(note)), result.notes.join("\n"));
 });
 
+test("Aturan option: the night workers' target follows the weekly hours limit, because a night is longer", { timeout: 300_000 }, async () => {
+  const rules = { ...DEFAULT_RULES, workDaysTargetHoursCap: true };
+  const result = await generateRoster({ config: makeConfig({ year: 2026, month: 10, rules, search: { beamWidth: 1500 } }), calendars, history });
+  assert.equal(result.audit.ok, true);
+  // 40 h x 31/7 days = 177 h; a night is 9 h net, a day shift 8 h; 31 nights / 4 men.
+  assert.equal(result.memberSummary.rizky.workTarget, 21);
+  assert.equal(result.memberSummary.hilvani.workTarget, 22, "day-shift people keep the normal target");
+  assert.ok(result.notes.some((note) => /yang boleh Shift 3: 21 hari/.test(note)), result.notes.join("\n"));
+  const normal = await generateRoster({ config: makeConfig({ year: 2026, month: 10, search: { beamWidth: 1500 } }), calendars, history });
+  assert.equal(normal.memberSummary.rizky.workTarget, 22, "off by default: the same target for everyone");
+});
+
 test("a fixed target in the Aturan sheet still works: over and under are both penalized", { timeout: 120_000 }, async () => {
   const result = await generateRoster({ config: makeConfig({ year: 2026, month: 10, rules: { ...DEFAULT_RULES, workDaysTarget: 21 }, search: { beamWidth: 1500 } }), calendars, history });
   assert.equal(result.memberSummary.hilvani.workTarget, 21);

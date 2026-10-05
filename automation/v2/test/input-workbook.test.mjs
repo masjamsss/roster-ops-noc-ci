@@ -247,6 +247,73 @@ test("an older Data Roster gets the newer request kinds in its 'Jenis' list (Hin
   assert.deepEqual(await upgradeInputWorkbook(file), [], "nothing to change the second time");
 });
 
+// Row number of the Aturan row whose label starts with `start`.
+function ruleRow(workbook, start) {
+  let found = null;
+  workbook.getWorksheet(INPUT_LAYOUT.rules.sheet).eachRow((row, rowNumber) => {
+    if (found === null && String(row.getCell(1).value ?? "").startsWith(start)) found = rowNumber;
+  });
+  return found;
+}
+const SHORT_SICK = "Hari tanpa Shift 3 setelah sakit singkat";
+const LONG_SICK = "Hari tanpa Shift 3 setelah sakit lama";
+const HOURS_CAP = "Target hari kerja yang boleh Shift 3 mengikuti batas jam";
+
+test("the Aturan sheet has the two choices of 5 Oct next to their related rows, with a dropdown or a number range, off by default", async () => {
+  const file = await freshWorkbook();
+  const input = await readInputWorkbook(file);
+  assert.equal(input.rules.workDaysTargetHoursCap, false, "the same target for everyone unless chosen");
+  assert.equal(input.rules.nightFreeDaysAfterShortSick, 5, "a short sickness the same as a long one unless chosen");
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(file);
+  const sheet = workbook.getWorksheet(INPUT_LAYOUT.rules.sheet);
+  assert.equal(ruleRow(workbook, HOURS_CAP), ruleRow(workbook, "Target hari kerja per orang") + 1);
+  assert.equal(ruleRow(workbook, SHORT_SICK), ruleRow(workbook, LONG_SICK) + 1);
+  assert.deepEqual(sheet.getCell(ruleRow(workbook, HOURS_CAP), 2).dataValidation.formulae, ['"Ya,Tidak"']);
+  const number = sheet.getCell(ruleRow(workbook, SHORT_SICK), 2).dataValidation;
+  assert.deepEqual([number.type, number.formulae, number.showErrorMessage], ["whole", [0, 14], true]);
+  await edit(file, (book) => {
+    const rules = book.getWorksheet(INPUT_LAYOUT.rules.sheet);
+    rules.getCell(ruleRow(book, HOURS_CAP), 2).value = "Ya";
+    rules.getCell(ruleRow(book, SHORT_SICK), 2).value = 2;
+  });
+  const changed = await readInputWorkbook(file);
+  assert.deepEqual([changed.rules.workDaysTargetHoursCap, changed.rules.nightFreeDaysAfterShortSick], [true, 2]);
+  await edit(file, (book) => (book.getWorksheet(INPUT_LAYOUT.rules.sheet).getCell(ruleRow(book, SHORT_SICK), 2).value = 7));
+  await assert.rejects(readInputWorkbook(file), /sakit singkat.*tidak boleh lebih besar/);
+});
+
+test("an older Data Roster.xlsx: the upgrade puts the new rows next to their related rows and keeps every value the admin typed", async () => {
+  const file = await freshWorkbook();
+  await edit(file, (workbook) => {
+    const sheet = workbook.getWorksheet(INPUT_LAYOUT.rules.sheet);
+    sheet.getCell(ruleRow(workbook, LONG_SICK), 2).value = 4;
+    sheet.getCell(ruleRow(workbook, LONG_SICK), 1).value = "Hari tanpa Shift 3 setelah sakit"; // its name before 5 Oct
+    sheet.getCell(ruleRow(workbook, "Batas jam kerja bersih per minggu"), 2).value = 42;
+    sheet.spliceRows(ruleRow(workbook, SHORT_SICK), 1);
+    sheet.spliceRows(ruleRow(workbook, HOURS_CAP), 1);
+  });
+  const added = await upgradeInputWorkbook(file);
+  assert.equal(added.length, 2, added.join(" | "));
+  const input = await readInputWorkbook(file);
+  assert.deepEqual([input.rules.nightFreeDaysAfterSick, input.rules.weeklyHoursLimit], [4, 42], "the admin's values are kept");
+  assert.deepEqual([input.rules.nightFreeDaysAfterShortSick, input.rules.workDaysTargetHoursCap], [4, false], "defaults: no change in behaviour");
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(file);
+  assert.equal(ruleRow(workbook, SHORT_SICK), ruleRow(workbook, LONG_SICK) + 1, "next to its related row");
+  assert.equal(ruleRow(workbook, HOURS_CAP), ruleRow(workbook, "Target hari kerja per orang") + 1);
+  // Every value cell carries the validation of its own row (no dropdown left over from the row that was there before).
+  const sheet = workbook.getWorksheet(INPUT_LAYOUT.rules.sheet);
+  sheet.eachRow((row, rowNumber) => {
+    if (rowNumber < 5 || !row.getCell(1).value) return;
+    const limits = String(row.getCell(3).value);
+    const validation = row.getCell(2).dataValidation;
+    const expected = limits.startsWith("Ya / Tidak") ? "list" : /^\d+–\d+$/.test(limits) ? "whole" : undefined;
+    assert.equal(validation?.type, expected, `${row.getCell(1).value}: ${JSON.stringify(validation)}`);
+  });
+  assert.deepEqual(await upgradeInputWorkbook(file), [], "nothing to change the second time");
+});
+
 test("the Aturan sheet has a row for 3-night blocks only when forced (Ya by default)", async () => {
   const file = await freshWorkbook();
   assert.equal((await readInputWorkbook(file)).rules.longNightBlockOnlyIfNeeded, true);

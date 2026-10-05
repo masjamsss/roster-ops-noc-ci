@@ -106,6 +106,12 @@ test("the review before generating lists active agents, joiners, leavers, leave 
   assert.deepEqual(preview.requests.map((request) => [request.name, request.kind, request.days]), [["Addin", "Cuti", 3]], "only leave inside the month");
   assert.deepEqual(preview.holidays.map((day) => day.date), ["2026-12-24", "2026-12-25"]);
   assert.match(preview.lines.join("\n"), /Addin — Cuti 16–18 Des \(3 hari\)/);
+  // The choices of the Aturan sheet, in plain words, before anything is made.
+  const text = preview.lines.join("\n");
+  assert.match(text, /Pilihan di sheet Aturan/);
+  assert.match(text, /Target yang boleh Shift 3: sama dengan yang lain/);
+  assert.match(text, /Setelah sakit 3 hari atau lebih: tanpa Shift 3 selama 5 hari/);
+  assert.match(text, /Setelah sakit 1–2 hari: tanpa Shift 3 selama 5 hari/);
 });
 
 test("buat roster in best-result mode tries the default variants and keeps the best", { timeout: 600_000 }, async () => {

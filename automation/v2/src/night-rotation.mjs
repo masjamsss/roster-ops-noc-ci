@@ -4,7 +4,7 @@
 // is skipped but keeps their place at the front of the queue.
 import { isOffLike } from "./codes.mjs";
 import { parseClock } from "./date-utils.mjs";
-import { isActive } from "./rules.mjs";
+import { isActive, nightBlockedAfterSick } from "./rules.mjs";
 
 export function initialNightState(historyCodesById, queue, nightShiftId) {
   for (const id of queue) {
@@ -35,7 +35,7 @@ function canStartBlock(id, { day, fixedToday, fixedTomorrow, states, memberById,
   }
   const state = states.get(id);
   if (state.previousCode === nightId) return false;
-  if ((state.daysSinceSick ?? 99) + 1 <= (rules.nightFreeDaysAfterSick ?? 0)) return false;
+  if (nightBlockedAfterSick(state, rules)) return false;
   if (state.lastWorkWasNight && isOffLike(state.previousCode) && state.restStreak < rules.nightRecoveryOffDays) return false;
   if (state.workStreak + rules.nightBlock.min > rules.maxConsecutiveWorkDays) return false;
   if (state.lastWorkEnd !== null) {

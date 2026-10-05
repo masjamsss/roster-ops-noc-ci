@@ -35,7 +35,11 @@ export const DEFAULT_RULES = Object.freeze({
   nightBlock: { min: 2, preferred: 2, max: 3 },
   balanceDayOnlyShifts: true,
   // Back from sick leave (e.g. hospital): no Shift 3 for the first days back.
+  // `nightFreeDaysAfterShortSick` (Aturan row, for 1-2 sick days) defaults to the same.
   nightFreeDaysAfterSick: 5,
+  // Aturan option (5 Oct, Jamal's choice in the Excel): lower the night workers'
+  // automatic target so their average week stays within weeklyHoursLimit.
+  workDaysTargetHoursCap: false,
   // Friday prayer coverage: at least one female agent on Shift 1 every Friday.
   fridayShift1Female: true,
   // Leave counts as a work day for the consecutive-day limit and night recovery (user, 30 Sep).

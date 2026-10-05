@@ -13,17 +13,20 @@
 // computed here with the same logic, so the file shows values before Excel
 // recalculates. The definitions follow audit.mjs, quality.mjs and wellbeing.mjs;
 // keep them in step.
+import { SHORT_SICK_MAX_DAYS } from "./history.mjs";
 import { WLB_POINTS } from "./wellbeing.mjs";
 
-const HISTORY_DAYS = 10;
+// Enough past days to see a sickness that still blocks nights on the 1st (up to
+// 14 night-free days, the Aturan maximum, plus the days that make it "long").
+const HISTORY_DAYS = 17;
 const LOOKAHEAD_DAYS = 6;
 const FIRST = 2; // the timeline starts in column B of "Hitungan"
-const PARAM = { maxWork: 2, nightMax: 3, recovery: 4, minRest: 5, maxOff: 6, sickFree: 7, limit: 8, leaveAsWork: 9, backward: 10, friday: 11 };
+const PARAM = { maxWork: 2, nightMax: 3, recovery: 4, minRest: 5, maxOff: 6, sickFree: 7, limit: 8, leaveAsWork: 9, backward: 10, friday: 11, shortSickFree: 21 };
 const SHIFT_ROW = { 1: 13, 2: 14, 3: 15, T: 16 }; // A code | B start | C end (night +24) | D level | E net hours
 const COVER_ROW = { weekdayMin: 18, specialExact: 19, specialMin: 20 }; // B, C, D = Shift 1, 2, 3
 const TL = { date: 23, inMonth: 24, weekend: 25, saturday: 26, friday: 27, special: 28, cover: 29, exact: 30, fridayMiss: 31 };
 const MEMBER_FIRST_ROW = 34;
-const ROWS = ["code", "work", "stretch", "streak", "nightRun", "lastNight", "rest", "offRun", "hours", "offLike", "req", "active",
+const ROWS = ["code", "work", "stretch", "streak", "nightRun", "lastNight", "rest", "offRun", "hours", "offLike", "req", "active", "sickRun", "sinceSick", "sinceLongSick",
   "vStreak", "vNightMax", "vRecovery", "vRest", "vBackward", "vEligible", "vOffMax", "vRequest", "vInactive", "vSick",
   "single", "isolated", "switch", "shortRecovery", "longBlock", "weeks"];
 const R = Object.fromEntries(ROWS.map((name, index) => [name, index]));
@@ -112,12 +115,14 @@ export function checkSheets(workbook, result, L, ui) {
   const paramValues = {
     maxWork: rules.maxConsecutiveWorkDays, nightMax: rules.nightBlock.max, recovery: rules.nightRecoveryOffDays, minRest: rules.minimumRestHours,
     maxOff: rules.maxConsecutiveOffDays, sickFree: rules.nightFreeDaysAfterSick ?? 0, limit: rules.weeklyHoursLimit ?? 40,
-    leaveAsWork: rules.leaveCountsAsWork === false ? 0 : 1, backward: rules.forbidBackwardShiftWithoutOff === false ? 0 : 1, friday: rules.fridayShift1Female === false ? 0 : 1
+    leaveAsWork: rules.leaveCountsAsWork === false ? 0 : 1, backward: rules.forbidBackwardShiftWithoutOff === false ? 0 : 1, friday: rules.fridayShift1Female === false ? 0 : 1,
+    shortSickFree: rules.nightFreeDaysAfterShortSick ?? rules.nightFreeDaysAfterSick ?? 0
   };
   const paramLabels = {
     maxWork: "Maksimal hari kerja berturut-turut", nightMax: "Shift 3 maksimal berturut-turut", recovery: "Libur setelah blok Shift 3", minRest: "Istirahat minimal (jam)",
-    maxOff: "Maksimal libur (H) berturut-turut", sickFree: "Hari tanpa Shift 3 setelah sakit", limit: "Batas jam kerja bersih per minggu",
-    leaveAsWork: "Cuti dihitung hari kerja (1 = ya)", backward: "Larangan pindah shift mundur (1 = ya)", friday: "Jumat: agen perempuan di Shift 1 (1 = ya)"
+    maxOff: "Maksimal libur (H) berturut-turut", sickFree: "Hari tanpa Shift 3 setelah sakit lama (3 hari atau lebih)", limit: "Batas jam kerja bersih per minggu",
+    leaveAsWork: "Cuti dihitung hari kerja (1 = ya)", backward: "Larangan pindah shift mundur (1 = ya)", friday: "Jumat: agen perempuan di Shift 1 (1 = ya)",
+    shortSickFree: `Hari tanpa Shift 3 setelah sakit singkat (1–${SHORT_SICK_MAX_DAYS} hari)`
   };
   for (const [key, row] of Object.entries(PARAM)) {
     put(row, 1, paramLabels[key]);
@@ -250,6 +255,14 @@ export function checkSheets(workbook, result, L, ui) {
       put(row("req"), column, g.req[t]);
       g.active[t] = activeOn(date) ? 1 : 0;
       put(row("active"), column, g.active[t]);
+      // sickness: days in a row, days since the last sick day, days since the last
+      // sick day of a sickness longer than SHORT_SICK_MAX_DAYS (rules.mjs nightBlockedAfterSick)
+      g.sickRun[t] = code === "S" ? (t > 0 ? g.sickRun[t - 1] : 0) + 1 : 0;
+      f(row("sickRun"), column, t > 0 ? `IF(${c}="S",${prev("sickRun")}+1,0)` : `IF(${c}="S",1,0)`, g.sickRun[t]);
+      g.sinceSick[t] = code === "S" ? 0 : t > 0 ? g.sinceSick[t - 1] + 1 : 99;
+      f(row("sinceSick"), column, t > 0 ? `IF(${c}="S",0,${prev("sinceSick")}+1)` : `IF(${c}="S",0,99)`, g.sinceSick[t]);
+      g.sinceLongSick[t] = code === "S" && g.sickRun[t] > SHORT_SICK_MAX_DAYS ? 0 : t > 0 ? g.sinceLongSick[t - 1] + 1 : 99;
+      f(row("sinceLongSick"), column, `IF(AND(${c}="S",${at("sickRun", t)}>${SHORT_SICK_MAX_DAYS}),0,${t > 0 ? `${prev("sinceLongSick")}+1` : 99})`, g.sinceLongSick[t]);
       if (!inMonth(t)) continue;
 
       // violations, month days only
@@ -274,9 +287,8 @@ export function checkSheets(workbook, result, L, ui) {
       const broken = r.startsWith("!") ? ["1", "2", "3"].includes(code) && r.slice(1).includes(code) : r !== "" && r !== code;
       v("vRequest", broken ? 1 : 0, `IF(LEFT(${at("req", t)},1)="!",IF(AND(OR(${c}="1",${c}="2",${c}="3"),ISNUMBER(FIND(${c},${at("req", t)}))),1,0),IF(AND(${at("req", t)}<>"",${at("req", t)}<>${c}),1,0))`);
       v("vInactive", (!g.active[t] && code !== "-") || (g.active[t] && code === "-") ? 1 : 0, `IF(OR(AND(${at("active", t)}=0,${c}<>"-"),AND(${at("active", t)}=1,${c}="-")),1,0)`);
-      const from = Math.max(0, t - paramValues.sickFree);
-      const sick = paramValues.sickFree > 0 && code === "3" && r !== "3" && codes.slice(from, t).includes("S") ? 1 : 0;
-      v("vSick", sick, paramValues.sickFree > 0 && t > 0 ? `IF(AND(${p("sickFree")}>0,${c}="3",${at("req", t)}<>"3",COUNTIF(${col(from)}${row("code")}:${col(t - 1)}${row("code")},"S")>0),1,0)` : "0");
+      const sick = t > 0 && code === "3" && r !== "3" && (g.sinceSick[t - 1] + 1 <= paramValues.shortSickFree || g.sinceLongSick[t - 1] + 1 <= paramValues.sickFree) ? 1 : 0;
+      v("vSick", sick, t > 0 ? `IF(AND(${c}="3",${at("req", t)}<>"3",OR(${prev("sinceSick")}+1<=${p("shortSickFree")},${prev("sinceLongSick")}+1<=${p("sickFree")})),1,0)` : "0");
       // work-life balance and quality counts (inside the month, not its first or last day for singles)
       const inside = t > H && t < H + M - 1;
       v("single", inside && work[t] && !work[t - 1] && !work[t + 1] ? 1 : 0, inside ? `IF(AND(${at("work", t)}=1,${prev("work")}=0,${at("work", t + 1)}=0),1,0)` : "0");

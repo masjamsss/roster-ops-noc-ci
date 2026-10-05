@@ -1,10 +1,19 @@
 import { isOffLike, isWorkLike } from "./codes.mjs";
 import { shiftWindow, weekdayIndex } from "./date-utils.mjs";
-import { NO_HISTORY } from "./history.mjs";
+import { NO_HISTORY, SHORT_SICK_MAX_DAYS } from "./history.mjs";
 import { KODE_LABEL } from "./labels-id.mjs";
 
 export function isActive(member, date) {
   return (!member.activeFrom || date >= member.activeFrom) && (!member.activeUntil || date <= member.activeUntil);
+}
+
+// Back from sickness: no Shift 3 for `nightFreeDaysAfterSick` days after a
+// sickness of 3 days or more, and `nightFreeDaysAfterShortSick` days after any
+// sick day (a short sickness of 1-2 days; the same as the long one when not set).
+export function nightBlockedAfterSick(state, rules) {
+  const long = rules.nightFreeDaysAfterSick ?? 0;
+  const short = rules.nightFreeDaysAfterShortSick ?? long;
+  return (state.daysSinceSick ?? NO_HISTORY) + 1 <= short || (state.daysSinceLongSick ?? NO_HISTORY) + 1 <= long;
 }
 
 export function initialMemberState(carry, member) {
@@ -54,7 +63,7 @@ function hardViolation(state, member, code, day, ctx, requested) {
     }
     if (night && state.previousCode === ctx.nightShiftId && state.nightStreak + 1 > rules.nightBlock.max) return { rule: "night-max" };
     // Back from sick leave (e.g. hospital): day shifts first, no nights yet.
-    if (night && !requested && (state.daysSinceSick ?? NO_HISTORY) + 1 <= (rules.nightFreeDaysAfterSick ?? 0)) return { rule: "after-sick" };
+    if (night && !requested && nightBlockedAfterSick(state, rules)) return { rule: "after-sick" };
   } else if (code === "H" && !requested && state.offStreak + 1 > ctx.rules.maxConsecutiveOffDays) {
     return { rule: "off-max" };
   }
@@ -96,8 +105,11 @@ export function explainTransition(state, member, code, day, ctx, { requested = f
       return `${name} tidak boleh pindah mundur dari Shift ${violation.from} ke Shift ${code} tanpa libur`;
     case "night-max":
       return `${name} sudah ${state.nightStreak} malam berturut-turut (maksimal ${rules.nightBlock.max})`;
-    case "after-sick":
-      return `${name} baru kembali dari sakit (belum ${rules.nightFreeDaysAfterSick} hari), jadi belum boleh Shift 3`;
+    case "after-sick": {
+      const longSickness = (state.daysSinceLongSick ?? NO_HISTORY) + 1 <= (rules.nightFreeDaysAfterSick ?? 0);
+      const days = longSickness ? rules.nightFreeDaysAfterSick : rules.nightFreeDaysAfterShortSick ?? rules.nightFreeDaysAfterSick;
+      return `${name} baru kembali dari sakit (belum ${days} hari), jadi belum boleh Shift 3`;
+    }
     case "off-max":
       return `${name} sudah libur ${state.offStreak} hari berturut-turut (maksimal ${rules.maxConsecutiveOffDays})`;
     default:
@@ -206,6 +218,8 @@ export function transitionMember(state, member, code, day, ctx, { requested = fa
     }
   }
   next.daysSinceSick = code === "S" ? 0 : Math.min(NO_HISTORY, (state.daysSinceSick ?? NO_HISTORY) + 1);
+  next.sickRun = code === "S" ? (state.sickRun ?? 0) + 1 : 0;
+  next.daysSinceLongSick = code === "S" && next.sickRun > SHORT_SICK_MAX_DAYS ? 0 : Math.min(NO_HISTORY, (state.daysSinceLongSick ?? NO_HISTORY) + 1);
   // Rosterable days exclude leave, sickness and training; those are "excused"
   // days that count 1:1 against the person's monthly workday target.
   if (day.published && (code === "C" || code === "S" || code === "T")) next.excusedCount = state.excusedCount + 1;

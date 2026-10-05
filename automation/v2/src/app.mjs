@@ -185,7 +185,7 @@ export async function previewRoster({ root, monthKey, online = true, fetchImpl, 
   if (holidays.length === 0) lines.push("  • Tidak ada");
   for (const day of holidays) lines.push(`  • ${formatTanggal(day.date, { pendek: true })} — ${day.name}${day.tentative ? " (belum pasti)" : ""}`);
   for (const note of holidayNotes) lines.push(`  ! ${note}`);
-  lines.push("", `Target hari kerja: ${typeof config.rules.workDaysTarget === "number" ? `${config.rules.workDaysTarget} hari per orang` : "pekerjaan dibagi rata ke semua anggota"}`);
+  lines.push("", ...ruleChoiceLines(config.rules));
   for (const warning of config.warnings) lines.push(`! ${warning}`);
   if (prepared.upgraded?.length) lines.push(`! ${upgradeNote(prepared.upgraded)}`);
   return {
@@ -194,6 +194,23 @@ export async function previewRoster({ root, monthKey, online = true, fetchImpl, 
     leaving: members.filter((member) => member.leaving),
     notContinuing
   };
+}
+
+// The policy choices of the Aturan sheet in plain words, shown before a roster
+// is made so the admin can still change them (menu: "u").
+function ruleChoiceLines(rules) {
+  const yes = (value) => (value === false ? "Tidak" : "Ya");
+  const longSick = rules.nightFreeDaysAfterSick ?? 0;
+  const shortSick = rules.nightFreeDaysAfterShortSick ?? longSick;
+  const sick = (days) => (days > 0 ? `tanpa Shift 3 selama ${days} hari` : "boleh langsung Shift 3");
+  return [
+    "Pilihan di sheet Aturan (diubah di Data Roster.xlsx):",
+    `  • Target hari kerja: ${typeof rules.workDaysTarget === "number" ? `${rules.workDaysTarget} hari per orang` : "otomatis, pekerjaan dibagi rata (maksimal 5 hari kerja per minggu)"}`,
+    `  • Target yang boleh Shift 3: ${rules.workDaysTargetHoursCap && typeof rules.workDaysTarget !== "number" ? `disesuaikan dengan batas ${rules.weeklyHoursLimit ?? 40} jam kerja per minggu (biasanya 1 hari lebih sedikit)` : "sama dengan yang lain"}`,
+    `  • Setelah sakit 3 hari atau lebih: ${sick(longSick)}`,
+    `  • Setelah sakit 1–2 hari: ${sick(shortSick)}`,
+    `  • Blok 3 malam hanya bila terpaksa: ${yes(rules.longNightBlockOnlyIfNeeded)} · Cuti dihitung hari kerja: ${yes(rules.leaveCountsAsWork)}`
+  ];
 }
 
 export async function buatRoster({ root, monthKey, force = false, online = true, withoutHistory = false, best = false, keep = false, from = null, lockManual = false, onProgress, fetchImpl, now = new Date() }) {

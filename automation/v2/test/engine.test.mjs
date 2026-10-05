@@ -116,6 +116,15 @@ test("parallel attempts: at most half the cores and about 2.8 GB of memory each 
   assert.equal(plannedWorkers(1, {}, { cores: 8, memory: 16e9 }), 1);
 });
 
+test("a short sickness with its own night-free period: the roster follows it and the notes say until when", { timeout: 300_000 }, async () => {
+  const requests = [{ memberId: "rizky", name: "Rizky", from: "2026-10-14", to: "2026-10-14", code: "S", kind: "Sakit", source: "test" }];
+  const rules = { ...DEFAULT_RULES, nightFreeDaysAfterShortSick: 2 };
+  const result = await generateRoster({ config: makeConfig({ year: 2026, month: 10, rules, requests, search: { beamWidth: 1500 } }), calendars: noHolidays(2026), history: septemberHistory });
+  assert.equal(result.audit.ok, true);
+  assert.ok(result.notes.some((note) => /Rizky sakit 14 Okt; kembali tgl 15 Okt dengan shift pagi\/siang, tanpa Shift 3 sampai 16 Okt/.test(note)), result.notes.filter((note) => /sakit/.test(note)).join("\n"));
+  assert.ok(!["2026-10-15", "2026-10-16"].some((date) => result.schedule.rizky[date] === "3"));
+});
+
 test("the default best-result portfolio: the normal search first, then 5 variants relative to the settings", () => {
   assert.equal(DEFAULT_PORTFOLIO.length, 6);
   assert.deepEqual(DEFAULT_PORTFOLIO[0], {});

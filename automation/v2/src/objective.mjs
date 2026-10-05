@@ -1,7 +1,7 @@
 // The roster objective (lower is better). The beam search adds these terms day
 // by day; scoreSchedule() recomputes the same total for a finished roster, so
 // the search and the local improvement always optimize the same thing.
-import { weekdayIndex } from "./date-utils.mjs";
+import { parseClock, weekdayIndex } from "./date-utils.mjs";
 import { transitionMember } from "./rules.mjs";
 import { staffingPenalty } from "./staffing.mjs";
 
@@ -49,14 +49,38 @@ export function makeEnv(config, days, members = [], fixed = []) {
   const share = need / Math.max(1, team);
   const weekCap = (publishedCount * 5) / 7;
   const monthTarget = numeric ? config.rules.workDaysTarget : Math.min(share, weekCap);
-  for (const goal of memberTargets) {
-    goal.base = (monthTarget * goal.activeDays) / Math.max(1, publishedCount);
+  // Aturan option: the same number of days is more hours for a night worker (a
+  // night is longer), so their target is lowered until an average week stays
+  // within the weekly hours limit. Only with the automatic target.
+  const nightCap = !numeric && config.rules.workDaysTargetHoursCap ? nightWorkerCap(config, members, memberTargets, publishedCount) : null;
+  members.forEach((member, index) => {
+    const goal = memberTargets[index];
+    const capped = nightCap && member.eligibleShifts.includes(nightCap.nightId) ? Math.min(monthTarget, nightCap.days) : monthTarget;
+    goal.base = (capped * goal.activeDays) / Math.max(1, publishedCount);
     goal.target = Math.max(0, goal.base - goal.excused);
-  }
+  });
   return {
     publishedCount, lastPublishedIndex: publishedCount - 1, mode: "fixed", basis: numeric ? "aturan" : "auto",
-    target: monthTarget, detail: { need, team, share, weekCap }, memberTargets
+    target: monthTarget, detail: { need, team, share, weekCap, nightCap }, memberTargets
   };
+}
+
+// Workdays a night worker can do in the month within the weekly hours limit,
+// with the nights shared evenly among the people allowed Shift 3.
+function nightWorkerCap(config, members, memberTargets, publishedCount) {
+  const breakHours = config.rules.breakHours ?? 1;
+  const net = (shift) => {
+    const [start, end] = [shift.start, shift.end].map(parseClock);
+    return (end > start ? end - start : end + 24 - start) - breakHours;
+  };
+  const night = config.shifts.find((shift) => shift.night);
+  const dayNet = Math.max(...config.shifts.filter((shift) => !shift.night).map(net));
+  const nightWorkers = members.reduce((sum, member, index) => sum + (member.eligibleShifts.includes(night?.id) ? memberTargets[index].activeDays / Math.max(1, publishedCount) : 0), 0);
+  if (!night || nightWorkers === 0 || dayNet <= 0) return null;
+  const limit = config.rules.weeklyHoursLimit ?? 40;
+  const nights = publishedCount / nightWorkers;
+  const days = ((limit * publishedCount) / 7 - nights * (net(night) - dayNet)) / dayNet;
+  return { nightId: night.id, days, limit, nightNet: net(night), dayNet };
 }
 
 // Fairness over three months: how many more (+) or fewer (-) nights / weekend

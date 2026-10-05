@@ -38,10 +38,12 @@ const RULE_ROWS = Object.freeze([
   { key: "minimumRestHours", label: "Istirahat minimal antar shift (jam)", min: 8, max: 16, explain: "Dihitung dari jam selesai satu shift ke jam mulai shift berikutnya." },
   { key: "maxConsecutiveOffDays", label: "Maksimal libur (H) berturut-turut", min: 1, max: 4, explain: "Tidak berlaku untuk cuti, sakit atau libur yang diminta." },
   { key: "workDaysTarget", label: "Target hari kerja per orang per bulan", kind: "auto", min: 15, max: 26, explain: "\"Otomatis\" = pekerjaan ideal bulan itu (2-2-1 di hari kerja, 1-1-1 di Sabtu/Minggu/tanggal merah) dibagi rata ke semua anggota, maksimal 5 hari kerja per minggu: 22 hari di bulan 31 hari, 21 di bulan 30 hari, 20 di Februari. Cuti, sakit dan training mengurangi target orang itu 1:1. Isi angka (misalnya 21) bila ada target tetap." },
+  { key: "workDaysTargetHoursCap", label: "Target hari kerja yang boleh Shift 3 mengikuti batas jam per minggu", kind: "yesno", optional: true, explain: "Tidak = semua orang targetnya sama (misalnya 22 hari). Ya = target orang yang boleh Shift 3 diturunkan supaya rata-rata jam kerja bersihnya per minggu tidak melewati \"Batas jam kerja bersih per minggu\", karena Shift 3 lebih panjang (9 jam bersih, Shift 1/2 8 jam). Contoh bulan 31 hari: 21 hari, bukan 22. Hanya berlaku bila target = Otomatis. Uji 6 bulan: temuan penting sedikit berkurang, tetapi ada 2 hari IDEAL lebih sedikit. Saran pengelola: Tidak." },
   { key: "balanceDayOnlyShifts", label: "Seimbangkan Shift 1 dan Shift 2 untuk yang tidak boleh Shift 3", kind: "yesno", explain: "Ya = kira-kira separuh Shift 1 dan separuh Shift 2 setiap bulan." },
   { key: "breakHours", label: "Istirahat tidak dibayar per shift (jam)", min: 0, max: 2, optional: true, explain: "Dipakai untuk menghitung jam kerja bersih. Contoh: Shift 1 07:00-16:00 dengan istirahat 1 jam = 8 jam kerja." },
   { key: "weeklyHoursLimit", label: "Batas jam kerja bersih per minggu", min: 35, max: 48, optional: true, explain: "Senin-Minggu. Roster berusaha tidak melewati batas ini; kelebihannya dilaporkan untuk HR (bisa menjadi lembur)." },
-  { key: "nightFreeDaysAfterSick", label: "Hari tanpa Shift 3 setelah sakit", min: 0, max: 14, optional: true, explain: "Setelah sakit (misalnya rawat inap), orang itu mulai lagi dengan shift pagi/siang: tidak Shift 3 selama sekian hari. 0 = tanpa aturan ini." },
+  { key: "nightFreeDaysAfterSick", label: "Hari tanpa Shift 3 setelah sakit lama (3 hari atau lebih)", aliases: ["Hari tanpa Shift 3 setelah sakit"], min: 0, max: 14, optional: true, explain: "Setelah sakit 3 hari atau lebih berturut-turut (misalnya rawat inap), orang itu mulai lagi dengan shift pagi/siang: tidak Shift 3 selama sekian hari, dihitung dari hari sakit terakhir. 0 = tanpa aturan ini." },
+  { key: "nightFreeDaysAfterShortSick", label: "Hari tanpa Shift 3 setelah sakit singkat (1–2 hari)", min: 0, max: 14, optional: true, explain: "Untuk sakit 1–2 hari berturut-turut (misalnya flu). Isi sama dengan baris di atas bila tidak ingin dibedakan. Saran pengelola: 2. Tidak boleh lebih besar dari baris di atas." },
   { key: "overtimeHours", label: "Lembur maksimal per orang untuk menutup yang berhalangan (jam)", min: 0, max: 6, optional: true, explain: "Untuk rencana di sheet Cadangan: shift sebelumnya boleh pulang lebih lambat dan/atau shift berikutnya datang lebih awal, masing-masing paling lama sekian jam. Lembur tidak pernah menggantikan satu shift penuh." },
   { key: "longNightBlockOnlyIfNeeded", label: "Blok 3 malam hanya bila terpaksa", kind: "yesno", optional: true, explain: "Ya = Shift 3 dibuat blok 2 malam; blok 3 malam hanya dipakai bila tidak ada jalan lain (misalnya bulan 31 hari biasanya butuh satu). Tidak = blok 3 malam dipakai bila membuat hari kerja lebih terisi." },
   { key: "leaveCountsAsWork", label: "Cuti dihitung hari kerja (batas hari berturut-turut dan istirahat setelah Shift 3)", kind: "yesno", optional: true, explain: "Ya = cuti dianggap seperti hari masuk: tidak memutus hitungan maksimal hari kerja berturut-turut, dan tidak dihitung sebagai 2 hari libur setelah Shift 3. Jadi cuti tidak mengurangi libur yang seharusnya didapat. Sakit tetap dihitung libur." },
@@ -319,6 +321,7 @@ function ruleValues(rules, shifts) {
     minimumRestHours: rules.minimumRestHours,
     maxConsecutiveOffDays: rules.maxConsecutiveOffDays,
     workDaysTarget: rules.workDaysTarget === "auto" ? "Otomatis" : rules.workDaysTarget,
+    workDaysTargetHoursCap: rules.workDaysTargetHoursCap ? "Ya" : "Tidak",
     balanceDayOnlyShifts: rules.balanceDayOnlyShifts ? "Ya" : "Tidak",
     fridayShift1Female: rules.fridayShift1Female === false ? "Tidak" : "Ya",
     leaveCountsAsWork: rules.leaveCountsAsWork === false ? "Tidak" : "Ya",
@@ -327,6 +330,7 @@ function ruleValues(rules, shifts) {
     weeklyHoursLimit: rules.weeklyHoursLimit ?? 40,
     overtimeHours: rules.overtimeHours ?? 4,
     nightFreeDaysAfterSick: rules.nightFreeDaysAfterSick ?? 5,
+    nightFreeDaysAfterShortSick: rules.nightFreeDaysAfterShortSick ?? rules.nightFreeDaysAfterSick ?? 5,
     shift1: shiftText("1"),
     shift2: shiftText("2"),
     shift3: shiftText("3")
@@ -342,14 +346,37 @@ function writeRuleRow(row, rule, value) {
   styleCell(row.getCell(2), "input", { alignment: { horizontal: "center" } });
   styleCell(row.getCell(3), null, { alignment: { horizontal: "center" } });
   styleCell(row.getCell(4), null, { alignment: { wrapText: true } });
-  if (rule.kind === "yesno") row.getCell(2).dataValidation = { type: "list", allowBlank: false, formulae: ['"Ya,Tidak"'] };
+  // Excel refuses a wrong value as it is typed: a Ya/Tidak dropdown, or a whole number in range.
+  const input = row.getCell(2);
+  removeValidation(input);
+  if (rule.kind === "yesno") {
+    input.dataValidation = { type: "list", allowBlank: false, showErrorMessage: true, error: "Pilih Ya atau Tidak.", showInputMessage: true, prompt: "Pilih Ya atau Tidak dari daftar.", formulae: ['"Ya,Tidak"'] };
+  } else if (!rule.kind) {
+    input.dataValidation = { type: "whole", operator: "between", allowBlank: false, showErrorMessage: true, error: `Isi angka ${rule.min} sampai ${rule.max}.`, showInputMessage: true, prompt: `Isi angka ${rule.min} sampai ${rule.max}.`, formulae: [rule.min, rule.max] };
+  }
+}
+
+function clearRuleRow(row) {
+  for (let column = 1; column <= 4; column += 1) {
+    const cell = row.getCell(column);
+    cell.value = null;
+    cell.style = {};
+  }
+  removeValidation(row.getCell(2));
+}
+
+// ExcelJS's own remove() leaves an empty <dataValidation> element in the file;
+// deleting the entry writes nothing at all.
+function removeValidation(cell) {
+  delete cell.worksheet.dataValidations.model[cell.address];
 }
 
 // Data Roster.xlsx files made by an older version lack the Aturan rows added
-// since (they still work, with the default values). This adds those rows below
-// the others, holding the default, so the admin can see and change them.
-// Nothing else is touched; the file is written only when a row is missing, and
-// put back as it was if the result does not read back cleanly.
+// since (they still work, with the default values). This adds those rows next
+// to the rows they belong with, holding the default, so the admin can see and
+// change them, and gives renamed rows their current name. Values the admin typed
+// are kept; the file is written only when something is missing, and put back as
+// it was if the result does not read back cleanly.
 // What an upgrade added besides Aturan rows (shown to the admin after the labels).
 export const KINDS_UPGRADE = "pilihan Jenis baru di sheet Cuti & Permintaan";
 
@@ -358,15 +385,23 @@ export async function upgradeInputWorkbook(file) {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(original);
   const sheet = workbook.getWorksheet(INPUT_LAYOUT.rules.sheet);
-  const present = new Set();
+  // Aturan values by rule (also under an older name), and rows the program does not know.
+  const found = new Map();
+  const unknown = [];
   let last = 4;
+  let renamed = false;
   sheet?.eachRow((row, rowNumber) => {
     const label = cellText(row.getCell(1));
-    if (!label) return;
-    present.add(label);
+    if (rowNumber <= 4 || !label) return;
     last = Math.max(last, rowNumber);
+    const rule = RULE_ROWS.find((item) => item.label === label) ?? RULE_ROWS.find((item) => item.aliases?.includes(label));
+    if (!rule) unknown.push([1, 2, 3, 4].map((column) => row.getCell(column).value));
+    else {
+      renamed ||= rule.label !== label;
+      found.set(rule.key, row.getCell(2).value);
+    }
   });
-  const missing = sheet ? RULE_ROWS.filter((rule) => rule.optional && !present.has(rule.label)) : [];
+  const missing = sheet ? RULE_ROWS.filter((rule) => rule.optional && !found.has(rule.key)) : [];
   // Request kinds added after the workbook was made: its "Jenis" dropdown would
   // refuse them (for example "Hindari Shift 3").
   const kindList = `"${REQUEST_KINDS.map(([label]) => label).join(",")}"`;
@@ -380,14 +415,23 @@ export async function upgradeInputWorkbook(file) {
       if (formula.includes("Cuti") && formula !== kindList) staleCells.push(cell);
     }
   }
-  if (missing.length === 0 && staleCells.length === 0) return [];
+  if (missing.length === 0 && !renamed && staleCells.length === 0) return [];
   try {
     await readInputWorkbook(file);
   } catch {
     return []; // the admin has something to fix first; reading the workbook will say what
   }
-  const values = ruleValues(DEFAULT_RULES, DEFAULT_SHIFTS);
-  missing.forEach((rule, index) => writeRuleRow(sheet.getRow(last + 1 + index), rule, values[rule.key]));
+  if (missing.length > 0 || renamed) {
+    // The Aturan table is written again in the standard order, so a new row sits
+    // next to the row it belongs with. Every value the admin typed is kept.
+    const values = ruleValues(DEFAULT_RULES, DEFAULT_SHIFTS);
+    // A short sickness starts with the same period as a long one: no change until the admin chooses.
+    if (found.has("nightFreeDaysAfterSick")) values.nightFreeDaysAfterShortSick = found.get("nightFreeDaysAfterSick");
+    const rows = RULE_ROWS.filter((rule) => found.has(rule.key) || missing.includes(rule));
+    for (let rowNumber = 5; rowNumber <= last; rowNumber += 1) clearRuleRow(sheet.getRow(rowNumber));
+    rows.forEach((rule, index) => writeRuleRow(sheet.getRow(5 + index), rule, found.has(rule.key) ? found.get(rule.key) : values[rule.key]));
+    unknown.forEach((cells, index) => cells.forEach((value, column) => (sheet.getRow(5 + rows.length + index).getCell(column + 1).value = value)));
+  }
   const known = new Set(staleCells.flatMap((cell) => String(cell.dataValidation.formulae[0]).replace(/"/g, "").split(",")));
   const newKinds = REQUEST_KINDS.map(([label]) => label).filter((label) => !known.has(label));
   for (const cell of staleCells) cell.dataValidation = { ...cell.dataValidation, formulae: [kindList] };
@@ -667,7 +711,8 @@ export async function readInputWorkbook(file) {
     rulesSheet.eachRow((row, rowNumber) => byLabel.set(cellText(row.getCell(1)), { row, rowNumber }));
     const parsed = {};
     for (const rule of RULE_ROWS) {
-      const found = byLabel.get(rule.label);
+      // A row renamed in a later version is still found under its older name.
+      const found = byLabel.get(rule.label) ?? (rule.aliases ?? []).map((label) => byLabel.get(label)).find(Boolean);
       if (!found) {
         // Rows added in later versions are optional so older workbooks keep working.
         if (!rule.optional) problems.push(`Sheet "Aturan": baris "${rule.label}" tidak ditemukan.`);
@@ -691,8 +736,12 @@ export async function readInputWorkbook(file) {
         else parsed[rule.key] = value;
       }
     }
-    for (const key of ["maxConsecutiveWorkDays", "nightRecoveryOffDays", "minimumRestHours", "maxConsecutiveOffDays", "workDaysTarget", "balanceDayOnlyShifts", "fridayShift1Female", "leaveCountsAsWork", "longNightBlockOnlyIfNeeded", "breakHours", "weeklyHoursLimit", "overtimeHours", "nightFreeDaysAfterSick"]) {
+    for (const key of ["maxConsecutiveWorkDays", "nightRecoveryOffDays", "minimumRestHours", "maxConsecutiveOffDays", "workDaysTarget", "balanceDayOnlyShifts", "fridayShift1Female", "leaveCountsAsWork", "longNightBlockOnlyIfNeeded", "breakHours", "weeklyHoursLimit", "overtimeHours", "nightFreeDaysAfterSick", "workDaysTargetHoursCap", "nightFreeDaysAfterShortSick"]) {
       if (parsed[key] !== undefined) rules[key] = parsed[key];
+    }
+    if ((rules.nightFreeDaysAfterShortSick ?? 0) > (rules.nightFreeDaysAfterSick ?? 0)) {
+      const label = (key) => RULE_ROWS.find((rule) => rule.key === key).label;
+      problems.push(`Sheet "Aturan": "${label("nightFreeDaysAfterShortSick")}" (${rules.nightFreeDaysAfterShortSick}) tidak boleh lebih besar dari "${label("nightFreeDaysAfterSick")}" (${rules.nightFreeDaysAfterSick}).`);
     }
     if (parsed.nightPreferred !== undefined) rules.nightBlock.preferred = parsed.nightPreferred;
     if (parsed.nightMax !== undefined) rules.nightBlock.max = parsed.nightMax;

@@ -3,6 +3,20 @@ import { addDays, isoDate, isWeekend, shiftWindow } from "./date-utils.mjs";
 
 // Used for "long enough ago that it no longer matters" (no work / no night in the window).
 export const NO_HISTORY = 99;
+// A sickness of at most this many days in a row is "short": it may have its own,
+// shorter night-free period (Aturan row "Hari tanpa Shift 3 setelah sakit singkat").
+export const SHORT_SICK_MAX_DAYS = 2;
+
+// Index of the last sick day that belongs to a sickness longer than SHORT_SICK_MAX_DAYS.
+export function lastLongSickIndex(codes) {
+  let run = 0;
+  let last = -1;
+  codes.forEach((code, index) => {
+    run = code === "S" ? run + 1 : 0;
+    if (run > SHORT_SICK_MAX_DAYS) last = index;
+  });
+  return last;
+}
 
 function countFromEnd(codes, predicate, endIndex = codes.length - 1) {
   let count = 0;
@@ -50,6 +64,8 @@ export function deriveMemberState(codes, ctx) {
     nightStreakAtEnd: previousCode === ctx.nightShiftId ? countFromEnd(codes, (code) => code === ctx.nightShiftId) : 0,
     daysSinceNight: codes.lastIndexOf(ctx.nightShiftId) === -1 ? NO_HISTORY : count - 1 - codes.lastIndexOf(ctx.nightShiftId),
     daysSinceSick: codes.lastIndexOf("S") === -1 ? NO_HISTORY : count - 1 - codes.lastIndexOf("S"),
+    daysSinceLongSick: lastLongSickIndex(codes) === -1 ? NO_HISTORY : count - 1 - lastLongSickIndex(codes),
+    sickRun: countFromEnd(codes, (code) => code === "S"),
     lastWorkEnd: hasWork ? workWindow(codes[lastWorkIndex], lastWorkIndex - count, ctx).end : null
   };
 }

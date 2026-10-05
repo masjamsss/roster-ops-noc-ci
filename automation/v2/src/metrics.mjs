@@ -2,6 +2,7 @@
 import { isWorkLike } from "./codes.mjs";
 import { addDays, isoDate, parseClock } from "./date-utils.mjs";
 import { displayTargets, fridayWithoutFemale } from "./objective.mjs";
+import { lastLongSickIndex } from "./history.mjs";
 import { dayStatus } from "./staffing.mjs";
 import { daftarNama, formatPeriode, formatRentang, formatTanggal, KODE_LABEL } from "./labels-id.mjs";
 
@@ -220,16 +221,24 @@ export function buildNotes({ members, days, codes, historyDates, historyCodes, i
     notes.push(`Semua blok Shift 3 berisi ${config.rules.nightBlock.preferred} malam.`);
   }
 
-  // Back from sick leave: day shifts first, no nights for a few days.
+  // Back from sick leave: day shifts first, no nights for a few days (fewer
+  // after a short sickness of 1-2 days when the Aturan sheet says so).
   const sickFree = config.rules.nightFreeDaysAfterSick ?? 0;
-  if (sickFree > 0) {
+  const shortSickFree = config.rules.nightFreeDaysAfterShortSick ?? sickFree;
+  if (Math.max(sickFree, shortSickFree) > 0) {
     members.forEach((member, i) => {
       const row = published.map((day) => codes[i][day.dayIndex]);
+      const past = historyCodes[i] ?? [];
       row.forEach((code, d) => {
         if (code !== "S" || row[d + 1] === "S" || d + 1 >= row.length) return;
         let start = d;
         while (start > 0 && row[start - 1] === "S") start -= 1;
-        const until = isoDate(addDays(published[d].date, sickFree));
+        // The free period runs from the last sick day; an earlier long sickness may still reach further.
+        const found = lastLongSickIndex([...past, ...row.slice(0, d + 1)]);
+        const longUntil = found === -1 ? -Infinity : found - past.length + sickFree;
+        const freeUntil = Math.max(d + shortSickFree, longUntil);
+        if (freeUntil <= d) return;
+        const until = isoDate(addDays(published[d].date, freeUntil - d));
         notes.push(`${member.name} sakit ${formatPeriode(published[start].date, published[d].date)}; kembali tgl ${formatTanggal(published[d + 1].date, { pendek: true })} dengan shift pagi/siang, tanpa Shift 3 sampai ${formatTanggal(until, { pendek: true })}.`);
       });
     });
@@ -264,6 +273,10 @@ export function buildNotes({ members, days, codes, historyDates, historyCodes, i
     notes.push(env.basis === "aturan"
       ? `Hari kerja per orang: ${range} hari (target tetap ${target} hari per orang, diatur di Data Roster.xlsx).`
       : `Hari kerja per orang: ${range} hari (target ${target} hari: pekerjaan ideal bulan ini dibagi rata, maksimal 5 hari kerja per minggu). Cuti, sakit dan training dihitung 1:1 sebagai hari yang sudah dipenuhi.`);
+    const cap = env.detail?.nightCap;
+    if (cap && cap.days < env.target) {
+      notes.push(`Target hari kerja yang boleh Shift 3: ${Math.round(cap.days)} hari (yang lain ${target} hari), disesuaikan dengan batas ${cap.limit} jam kerja bersih per minggu karena Shift 3 lebih panjang (${cap.nightNet} jam bersih, Shift 1/2 paling lama ${cap.dayNet} jam). Pilihan ini diatur di sheet Aturan.`);
+    }
     if (env.basis !== "aturan" && env.detail && env.detail.share <= env.detail.weekCap - 3) {
       notes.push(`Tim cukup besar: pekerjaan ideal dibagi rata hanya sekitar ${Math.round(env.detail.share)} hari per orang, di bawah 5 hari kerja per minggu (${Math.round(env.detail.weekCap)} hari). Bila semua perlu bekerja penuh, naikkan jumlah "ideal" di sheet Kebutuhan Shift (Data Roster.xlsx).`);
     }

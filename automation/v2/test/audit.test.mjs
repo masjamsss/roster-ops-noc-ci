@@ -21,12 +21,12 @@ const COVERAGE = {
 const all = ["1", "2", "3"];
 const dayOnly = ["1", "2"];
 
-function audit({ historyDates, historyCodes, dates, codes, members, requests = {}, publishedTo }) {
+function audit({ historyDates, historyCodes, dates, codes, members, requests = {}, publishedTo, rules = RULES }) {
   const allDates = [...historyDates, ...dates];
   const dayInfoByDate = Object.fromEntries(allDates.map((date) => [date, { isSpecial: isWeekend(date), isWeekend: isWeekend(date) }]));
   const codesById = Object.fromEntries(members.map((member) => [member.id, [...(historyCodes[member.id] ?? historyDates.map(() => "H")), ...codes[member.id]]]));
   return auditTimeline({
-    dates: allDates, codesById, members, shifts: SHIFTS, rules: RULES, coverage: COVERAGE, dayInfoByDate,
+    dates: allDates, codesById, members, shifts: SHIFTS, rules, coverage: COVERAGE, dayInfoByDate,
     requestsByDate: requests, generatedFrom: dates[0], publishedTo: publishedTo ?? dates.at(-1),
     trainingWindow: { start: "08:00", end: "17:00" }
   });
@@ -131,6 +131,16 @@ test("after sick leave, no Shift 3 in the first days back unless it was asked fo
   assert.match(afterSick.pelanggaran[0].pesan, /Ani/);
   const asked = audit({ historyDates: HISTORY, historyCodes: { a: ["S", "S"] }, dates: WEEK, codes: CLEAN, members: TEAM, requests: { "2026-10-01": { a: "3" }, "2026-10-02": { a: "3" }, "2026-10-07": { a: "3" } } });
   assert.equal(check(asked, "setelah-sakit").ok, true, "a night the admin asked for is allowed");
+});
+
+test("a short sickness may have a shorter night-free period; a sickness of 3 days or more keeps the normal one", () => {
+  const rules = { ...RULES, nightFreeDaysAfterShortSick: 0 };
+  const short = audit({ historyDates: HISTORY, historyCodes: { a: ["S", "S"] }, dates: WEEK, codes: CLEAN, members: TEAM, rules });
+  assert.equal(check(short, "setelah-sakit").ok, true, "2 days sick, 0 night-free days for a short sickness");
+  const threeDays = ["2026-09-28", ...HISTORY];
+  const long = audit({ historyDates: threeDays, historyCodes: { a: ["S", "S", "S"] }, dates: WEEK, codes: CLEAN, members: TEAM, rules });
+  assert.equal(check(long, "setelah-sakit").ok, false, "3 days sick: the normal 5 days");
+  assert.match(check(long, "setelah-sakit").pelanggaran[0].pesan, /5 hari/);
 });
 
 test("a leave day counts toward the 5-day limit and is not rest after nights (hand-edited roster)", () => {

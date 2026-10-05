@@ -613,7 +613,11 @@ function summarySheet(workbook, result, L, checks) {
   const targetText = result.settings.targetBasis === "aturan"
     ? `Target hari kerja = ${result.settings.workDaysTarget} hari per orang (diatur di Data Roster.xlsx)`
     : `Target hari kerja = pekerjaan ideal bulan ini (${pattern(result.settings.coverage.weekday.preferred)} di hari kerja, ${pattern(result.settings.coverage.special.preferred)} di Sabtu/Minggu/tanggal merah) dibagi rata, maksimal 5 hari kerja per minggu: ${result.settings.workDaysTarget} hari per orang`;
-  paragraph(sheet, row, `${targetText}, dikurangi 1 hari untuk setiap hari cuti, sakit atau training. Hari kerja berwarna kuning = selisih lebih dari 1 hari dari target. Istirahat wajib = 2 hari libur setelah setiap blok Shift 3 (bukan libur bebas). Jam kerja bersih = jam shift dikurangi istirahat tidak dibayar. Angka di tabel ini ikut berubah bila sheet Roster diubah.`,
+  const nightCap = result.settings.targetDetail?.nightCap;
+  const capText = nightCap && nightCap.days < result.settings.workDaysTarget
+    ? ` (yang boleh Shift 3: ${Math.round(nightCap.days)} hari, disesuaikan dengan batas ${nightCap.limit} jam kerja bersih per minggu karena Shift 3 lebih panjang)`
+    : "";
+  paragraph(sheet, row, `${targetText}${capText}, dikurangi 1 hari untuk setiap hari cuti, sakit atau training. Hari kerja berwarna kuning = selisih lebih dari 1 hari dari target. Istirahat wajib = 2 hari libur setelah setiap blok Shift 3 (bukan libur bebas). Jam kerja bersih = jam shift dikurangi istirahat tidak dibayar. Angka di tabel ini ikut berubah bila sheet Roster diubah.`,
     lastColumn, { italic: true, color: C.note, size: 9, charsPerLine: 160 });
 
   // Hours for HR: weekly net hours, weeks above the limit, hours on tanggal merah.
@@ -829,7 +833,10 @@ function adminSheet(workbook, result, { inputFile, historyLabel, manualChanges =
     ["Riwayat bulan lalu dari", historyLabel ?? history.source],
     ["Target hari kerja bulan ini", result.settings.targetBasis === "aturan" || !result.settings.targetDetail
       ? `${result.settings.workDaysTarget} hari (diatur di Data Roster.xlsx)`
-      : `${result.settings.workDaysTarget} hari (pekerjaan ideal ${result.settings.targetDetail.need} hari-orang ÷ ${result.settings.targetDetail.team.toFixed(1).replace(".", ",")} orang = ${result.settings.targetDetail.share.toFixed(1).replace(".", ",")}; maksimal 5 hari per minggu = ${result.settings.targetDetail.weekCap.toFixed(1).replace(".", ",")})`],
+      : `${result.settings.workDaysTarget} hari (pekerjaan ideal ${result.settings.targetDetail.need} hari-orang ÷ ${result.settings.targetDetail.team.toFixed(1).replace(".", ",")} orang = ${result.settings.targetDetail.share.toFixed(1).replace(".", ",")}; maksimal 5 hari per minggu = ${result.settings.targetDetail.weekCap.toFixed(1).replace(".", ",")})` +
+        (result.settings.targetDetail.nightCap && result.settings.targetDetail.nightCap.days < result.settings.workDaysTarget
+          ? `; yang boleh Shift 3: ${result.settings.targetDetail.nightCap.days.toFixed(1).replace(".", ",")} → ${Math.round(result.settings.targetDetail.nightCap.days)} hari (batas ${result.settings.targetDetail.nightCap.limit} jam per minggu)`
+          : "")],
     ["Urutan giliran Shift 3 awal bulan", result.nightQueue.start.map((id) => names.get(id) ?? id).join(" → ")],
     ["Urutan giliran Shift 3 bulan depan", result.nightQueue.afterMonth.map((id) => names.get(id) ?? id).join(" → ")],
     ["Perbaikan otomatis (tukar jadwal atau ubah satu hari)", `${result.search.localSwaps} kali`],
