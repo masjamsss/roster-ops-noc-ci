@@ -137,7 +137,9 @@ export function auditTimeline({ dates, codesById, members, shifts, rules, covera
         eligibility.push({ tanggal: date, anggota: name, pesan: `${name} mendapat Shift ${code} tgl ${tgl(date)}, padahal tidak boleh.` });
       }
       const wanted = requestsByDate[date]?.[member.id];
-      if (wanted && wanted !== code) {
+      if (wanted?.startsWith("!")) {
+        if (isShift(code) && wanted.slice(1).includes(code)) requests.push({ tanggal: date, anggota: name, pesan: `${name} tgl ${tgl(date)}: minta tidak ${KODE_LABEL[code]}, tetapi dijadwalkan ${KODE_LABEL[code]}.` });
+      } else if (wanted && wanted !== code) {
         requests.push({ tanggal: date, anggota: name, pesan: `${name} tgl ${tgl(date)}: diminta ${KODE_LABEL[wanted]}, tetapi dijadwalkan ${KODE_LABEL[code] ?? code}.` });
       }
       const active = isActiveOn(member, date);

@@ -76,10 +76,26 @@ function checkCapacity(config, members, days, fixed) {
   }
 }
 
+// "Hindari Shift X" requests: avoid[dayIndex][memberId] = Set of shifts the
+// person must not get that day (a hard rule in rules.mjs).
+function buildAvoid(config, members, days) {
+  const avoid = days.map(() => ({}));
+  const known = new Set(members.map((member) => member.id));
+  for (const request of config.requests) {
+    if (!request.code.startsWith("!")) continue;
+    if (!known.has(request.memberId)) throw new RosterError(`${request.source ?? "Permintaan"}: "${request.memberId}" tidak ada di daftar anggota aktif.`);
+    days.forEach((day, d) => {
+      if (day.date >= request.from && day.date <= request.to) (avoid[d][request.memberId] ??= new Set()).add(request.code.slice(1));
+    });
+  }
+  return avoid;
+}
+
 function buildFixed(config, members, days, nightId, shiftIds) {
   const fixed = days.map(() => ({}));
   const byId = new Map(members.map((member) => [member.id, member]));
   for (const request of config.requests) {
+    if (request.code.startsWith("!")) continue; // "Hindari Shift X": see buildAvoid
     const member = byId.get(request.memberId);
     const where = request.source ?? "Permintaan";
     if (!member) throw new RosterError(`${where}: "${request.memberId}" tidak ada di daftar anggota aktif.`);
@@ -253,6 +269,8 @@ export function prepareMonth({ config, calendars, history }) {
   const window = historyWindow(history, bounds.start, members);
   const historyCodes = members.map((member) => window.codesById[member.id]);
   const fixed = buildFixed(config, members, days, nightId, shiftIds);
+  const avoid = buildAvoid(config, members, days);
+  ctx.avoid = avoid;
   checkCapacity(config, members, days, fixed);
 
   const initialStates = members.map((member, i) => ({
@@ -262,7 +280,7 @@ export function prepareMonth({ config, calendars, history }) {
   const nightCapable = members.filter((member) => member.eligibleShifts.includes(nightId)).map((member) => member.id);
   const initialQueue = deriveNightQueue(window.codesById, nightCapable, nightId);
   const initialNight = initialNightState(window.codesById, initialQueue, nightId);
-  const patternsPerDay = days.map((day, d) => buildDayPatterns({ day, fixedToday: fixed[d], members, config, nightId }));
+  const patternsPerDay = days.map((day, d) => buildDayPatterns({ day, fixedToday: fixed[d], avoidToday: avoid[d], members, config, nightId }));
   const env = makeEnv(config, days, members, fixed);
   const rolling = fairnessOffsets(members, history?.stats);
   env.nightOffset = rolling.nights;
@@ -361,6 +379,7 @@ export async function generateRoster({ config, calendars, history, onProgress })
   const requestsByDate = {};
   days.forEach((day, d) => {
     requestsByDate[day.date] = Object.fromEntries(Object.entries(fixed[d]).filter(([, code]) => code !== "-"));
+    for (const [id, codes] of Object.entries(ctx.avoid?.[d] ?? {})) if (requestsByDate[day.date][id] === undefined) requestsByDate[day.date][id] = `!${[...codes].sort().join("")}`;
   });
   const timeline = Object.fromEntries(members.map((member, i) => [member.id, [...(historyCodes[i].length === window.dates.length ? historyCodes[i] : window.dates.map((_, k) => historyCodes[i][k - (window.dates.length - historyCodes[i].length)] ?? "-")), ...codes[i]]]));
   const audit = auditTimeline({

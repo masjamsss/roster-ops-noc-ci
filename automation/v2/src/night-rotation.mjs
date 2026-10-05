@@ -28,6 +28,7 @@ function canStartBlock(id, { day, fixedToday, fixedTomorrow, states, memberById,
   const rules = ctx.rules;
   if (!member || !member.eligibleShifts.includes(nightId) || !isActive(member, day.date)) return false;
   if (fixedToday[id] !== undefined && fixedToday[id] !== nightId) return false;
+  if (ctx.avoid?.[day.dayIndex]?.[id]?.has(nightId) || ctx.avoid?.[day.dayIndex + 1]?.[id]?.has(nightId)) return false;
   if (rules.nightBlock.min > 1 && day.hasTomorrow) {
     if (day.nextDate && !isActive(member, day.nextDate)) return false;
     if (fixedTomorrow[id] !== undefined && fixedTomorrow[id] !== nightId) return false;
@@ -69,7 +70,7 @@ export function nightOptions({ night, day, fixedToday, fixedTomorrow, states, me
   if (continuing) {
     const owner = byId.get(night.owner);
     const fixed = fixedToday[night.owner];
-    const canContinue = night.length < block.max && owner && isActive(owner, day.date) && (fixed === undefined || fixed === nightId);
+    const canContinue = night.length < block.max && owner && isActive(owner, day.date) && (fixed === undefined || fixed === nightId) && !ctx.avoid?.[day.dayIndex]?.[night.owner]?.has(nightId);
     if (canContinue) {
       const option = { owner: night.owner, night: { owner: night.owner, length: night.length + 1, queue: night.queue } };
       if (night.length < block.min) return [option];

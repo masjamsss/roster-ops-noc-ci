@@ -49,5 +49,18 @@ test("stretches and 3-night blocks continue from last month, as in the rules", (
   const result = workLifeBalance({ members, days, schedule: rows, memberSummary: sums, history });
   const labels = (id) => result.members.find((item) => item.id === id).factors.map((factor) => factor.label).join(" | ");
   assert.match(labels("cahyo"), /Blok 3 malam: 1/, "29-30 Sep + 1 Oct is a 3-night block, counted in October");
-  assert.match(labels("eko"), /5 hari kerja berturut-turut: 2 kali/, "29 Sep - 3 Oct reaches 5 days with September's days, and 6-10 Oct");
+  assert.doesNotMatch(labels("eko"), /hari kerja/, "5 work days then 2 days off is the healthy rhythm, not a burden");
+});
+
+test("too little recovery: 5 work days (counting last month) followed by only 1 day off costs extra", () => {
+  const history = { dates: ["2026-09-29", "2026-09-30"], codesById: { ani: ["H", "H"], cahyo: ["1", "1"], eko: ["H", "H"] } };
+  // Cahyo: 29 Sep - 3 Oct = 5 days, H on 4 Oct, back on 5 Oct.
+  const rows = { ani: row("1111HH1111HH22"), cahyo: row("111H1111HH1111"), eko: row("111HH11111HH11") };
+  const sums = { ani: summary({}), cahyo: summary({}), eko: summary({}) };
+  const result = workLifeBalance({ members, days, schedule: rows, memberSummary: sums, history });
+  const factors = (id) => result.members.find((item) => item.id === id).factors;
+  const short = factors("cahyo").find((factor) => /setelah 5 hari kerja/.test(factor.label));
+  assert.ok(short, JSON.stringify(factors("cahyo")));
+  assert.match(short.label, /Libur hanya 1 hari setelah 5 hari kerja: 1 kali/);
+  assert.ok(!factors("eko").some((factor) => /setelah 5 hari kerja/.test(factor.label)));
 });

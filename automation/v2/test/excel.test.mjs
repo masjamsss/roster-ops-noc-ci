@@ -155,3 +155,16 @@ test("Ringkasan shows each night person's Shift 3 and 3-night blocks over the la
   assert.ok(texts.includes("Pembagian Shift 3 selama 3 bulan"), "heading");
   assert.ok(texts.includes("September 2026") && texts.includes("Oktober 2026"));
 });
+
+test("double validation understands 'Hindari Shift X': the Excel agrees with the program", { timeout: 300_000 }, async () => {
+  const requests = [{ memberId: "cahyo", name: "Cahyo", from: "2026-12-07", to: "2026-12-11", code: "!3", kind: "Hindari Shift 3", source: "test" }];
+  const result = await generateRoster({ config: makeConfig({ year: 2026, month: 12, team: TEAM, requests, search: { beamWidth: 300 } }), calendars: holidays, history: { dates: [], codesById: {} } });
+  const dir = await mkdtemp(path.join(tmpdir(), "roster-avoid-"));
+  const file = path.join(dir, "Roster Desember 2026.xlsx");
+  await writeRosterWorkbook(result, file, { holidayCalendars: holidays, holidayNotes: [], holidayDifferences: [], inputFile: "Data Roster.xlsx" });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(file);
+  const verdicts = [];
+  workbook.getWorksheet("Pemeriksaan").eachRow((row) => row.eachCell((cell) => { if (/Sama|Berbeda/.test(String(cell.value?.result))) verdicts.push(cell.value.result); }));
+  assert.deepEqual([...new Set(verdicts)], ["✔ Sama"]);
+});

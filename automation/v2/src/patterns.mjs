@@ -38,14 +38,14 @@ function targetOptions(policy, isSpecial, dayShiftIds) {
   return options;
 }
 
-export function buildDayPatterns({ day, fixedToday, members, config, nightId }) {
+export function buildDayPatterns({ day, fixedToday, avoidToday = {}, members, config, nightId }) {
   const policy = day.isSpecial ? config.coverage.special : config.coverage.weekday;
   const dayShiftIds = config.shifts.filter((shift) => !shift.night).sort((a, b) => a.level - b.level).map((shift) => shift.id);
   const base = members.map((member) => fixedToday[member.id] ?? null);
   const byOwner = new Map();
 
   members.forEach((owner, ownerIndex) => {
-    if (!owner.eligibleShifts.includes(nightId) || !isActive(owner, day.date)) return;
+    if (!owner.eligibleShifts.includes(nightId) || !isActive(owner, day.date) || avoidToday[owner.id]?.has(nightId)) return;
     if (base[ownerIndex] !== null && base[ownerIndex] !== nightId) return;
     if (base.some((code, index) => index !== ownerIndex && code === nightId)) return;
     const assigned = [...base];
@@ -69,7 +69,7 @@ export function buildDayPatterns({ day, fixedToday, members, config, nightId }) 
         }
         const id = dayShiftIds[shiftIndex];
         const need = Math.max(0, needs[shiftIndex]);
-        const eligible = remaining.filter((index) => members[index].eligibleShifts.includes(id));
+        const eligible = remaining.filter((index) => members[index].eligibleShifts.includes(id) && !avoidToday[members[index].id]?.has(id));
         for (const chosen of combinations(eligible, need)) {
           const next = [...codes];
           for (const index of chosen) next[index] = id;
@@ -84,7 +84,7 @@ export function buildDayPatterns({ day, fixedToday, members, config, nightId }) 
 
   if (byOwner.size === 0) {
     throw new RosterError(
-      `Tidak ada susunan yang mungkin pada ${formatTanggal(day.date, { denganHari: true })}: ${explainImpossibleDay({ day, fixedToday, members, policy, shiftIds: [...dayShiftIds, nightId] })}\n` +
+      `Tidak ada susunan yang mungkin pada ${formatTanggal(day.date, { denganHari: true })}: ${explainImpossibleDay({ day, fixedToday, avoidToday, members, policy, shiftIds: [...dayShiftIds, nightId] })}\n` +
         'Pilihan: geser salah satu cuti atau permintaan di tanggal itu, atau tambahkan orang luar tim sebagai anggota sementara di sheet Anggota (isi "Mulai Bergabung" dan "Terakhir Bekerja" dengan tanggal itu, lalu shift yang boleh).',
       { date: day.date }
     );
@@ -95,18 +95,19 @@ export function buildDayPatterns({ day, fixedToday, members, config, nightId }) 
 const UNAVAILABLE_REASON = Object.freeze({ C: "cuti", S: "sakit", T: "training/dinas", H: "minta libur", "-": "tidak aktif" });
 
 // Which shift cannot be filled on a day, and why each person is unavailable.
-function explainImpossibleDay({ day, fixedToday, members, policy, shiftIds }) {
-  const reason = (member) => {
+function explainImpossibleDay({ day, fixedToday, avoidToday = {}, members, policy, shiftIds }) {
+  const reason = (member, shiftId) => {
     if (!isActive(member, day.date)) return "tidak aktif";
     const code = fixedToday[member.id];
+    if (code === undefined && avoidToday[member.id]?.has(shiftId)) return `minta tidak ${KODE_LABEL[shiftId] ?? shiftId}`;
     return UNAVAILABLE_REASON[code] ?? (code ? `diminta ${KODE_LABEL[code] ?? code}` : null);
   };
   const lines = [];
   for (const shiftId of shiftIds) {
     const allowed = members.filter((member) => member.eligibleShifts.includes(shiftId));
-    const free = allowed.filter((member) => isActive(member, day.date) && (fixedToday[member.id] === undefined || fixedToday[member.id] === shiftId));
+    const free = allowed.filter((member) => isActive(member, day.date) && (fixedToday[member.id] === undefined || fixedToday[member.id] === shiftId) && !avoidToday[member.id]?.has(shiftId));
     if (free.length >= (policy.minimum[shiftId] ?? 1)) continue;
-    const busy = allowed.map((member) => `${member.name} ${reason(member) ?? "tidak tersedia"}`);
+    const busy = allowed.map((member) => `${member.name} ${reason(member, shiftId) ?? "tidak tersedia"}`);
     const notAllowed = members.filter((member) => !member.eligibleShifts.includes(shiftId)).map((member) => member.name);
     lines.push(`Shift ${shiftId} tidak bisa diisi (${busy.join(", ")}${notAllowed.length ? `; ${daftarNama(notAllowed)} tidak boleh Shift ${shiftId}` : ""}).`);
   }

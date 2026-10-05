@@ -185,7 +185,9 @@ export function buildNotes({ members, days, codes, historyDates, historyCodes, i
   });
   const head = initialQueue[0];
   const firstBlock = nightBlocks.find((block) => !(continued.has(block.memberId) && block.start === published[0].date));
-  if (head && firstBlock && firstBlock.memberId !== head) {
+  // Someone not in the team yet on the 1st (a joiner, a temporary helper) simply
+  // waits for their turn; that is not worth a note.
+  if (head && firstBlock && firstBlock.memberId !== head && codes[memberIndex.get(head)][0] !== "-") {
     const i = memberIndex.get(head);
     const state = initialStates[i];
     const firstCode = codes[i][0];

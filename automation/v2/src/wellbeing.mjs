@@ -8,7 +8,7 @@ const DAY_SHIFTS = new Set(["1", "2"]);
 
 export const WLB_POINTS = Object.freeze({
   overTarget: 4, night: 1, longBlock: 2, noFullWeekend: 10, oneFullWeekend: 3, weekendDay: 1,
-  fullBlock: 2, singleOff: 3, singleWork: 3, hourOver: 1, hourHeavy: 2, shiftSwitch: 2
+  shortRecovery: 2, singleOff: 3, singleWork: 3, hourOver: 1, hourHeavy: 2, shiftSwitch: 2
 });
 export const WLB_LEVELS = Object.freeze([[80, "Baik"], [65, "Cukup"], [0, "Perlu perhatian"]]);
 const MIN_DAYS = 10;
@@ -54,8 +54,18 @@ export function workLifeBalance({ members, days, schedule, memberSummary, settin
     if (summary.fullWeekendsOff === 0) add(P.noFullWeekend, "Tidak ada libur Sabtu–Minggu penuh");
     else if (summary.fullWeekendsOff === 1) add(P.oneFullWeekend, "Libur Sabtu–Minggu penuh hanya 1 kali");
     add(P.weekendDay * summary.weekendWorkDays, `Kerja Sabtu/Minggu: ${summary.weekendWorkDays} hari`);
-    const full = reached(timeline, past.length, stretchDay, maxRun);
-    add(P.fullBlock * full, `${maxRun} hari kerja berturut-turut: ${full} kali`);
+    // 5 work days then 2 off is the healthy rhythm (no cost). Too little recovery
+    // is: a full stretch (counting last month, leave as work) followed by only
+    // one day off before work again (HSE shift-work guidance; 3 Oct review).
+    let streak = 0;
+    let shortRest = 0;
+    timeline.forEach((code, index) => {
+      const i = index - past.length;
+      const next = timeline[index + 1];
+      if (i > 0 && i < codes.length - 1 && !stretchDay(code) && streak >= maxRun && next !== undefined && stretchDay(next)) shortRest += 1;
+      streak = stretchDay(code) ? streak + 1 : 0;
+    });
+    add(P.shortRecovery * shortRest, `Libur hanya 1 hari setelah ${maxRun} hari kerja: ${shortRest} kali (tambahan)`);
     // Within the month, not on its first or last day (they continue elsewhere).
     const inside = (i) => i > 0 && i < codes.length - 1;
     const isolated = codes.filter((code, i) => code === "H" && inside(i) && WORK.has(codes[i - 1]) && WORK.has(codes[i + 1])).length;

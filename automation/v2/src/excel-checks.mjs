@@ -25,7 +25,7 @@ const TL = { date: 23, inMonth: 24, weekend: 25, saturday: 26, friday: 27, speci
 const MEMBER_FIRST_ROW = 34;
 const ROWS = ["code", "work", "stretch", "streak", "nightRun", "lastNight", "rest", "offRun", "hours", "offLike", "req", "active",
   "vStreak", "vNightMax", "vRecovery", "vRest", "vBackward", "vEligible", "vOffMax", "vRequest", "vInactive", "vSick",
-  "single", "isolated", "switch", "fullBlock", "longBlock", "weeks"];
+  "single", "isolated", "switch", "shortRecovery", "longBlock", "weeks"];
 const R = Object.fromEntries(ROWS.map((name, index) => [name, index]));
 const K = ROWS.length;
 // Member parameters: G name | H allow 1 | I allow 2 | J allow 3 | K woman | L target | M day-only; row 2 + index.
@@ -51,7 +51,7 @@ export const QUALITY_CHECKS = [
 ];
 const WLB_COLUMNS = [
   ["nights", "Shift 3 (malam)"], ["longBlocks", "Blok 3 malam"], ["weekendDays", "Kerja Sabtu/ Minggu"], ["fullWeekends", "Libur Sabtu–Minggu penuh"],
-  ["fullBlocks", "Hari ke-5 berturut-turut"], ["isolated", "Libur hanya 1 hari"], ["singles", "Masuk hanya 1 hari"],
+  ["shortRecovery", "Libur 1 hari setelah 5 hari kerja"], ["isolated", "Libur hanya 1 hari"], ["singles", "Masuk hanya 1 hari"],
   ["hoursOver", "Jam di atas batas"], ["hoursHeavy", "Jam di atas batas + 4"], ["switches", "Pindah Shift 1↔2 dalam blok"], ["overTarget", "Hari di atas target"]
 ];
 
@@ -199,7 +199,12 @@ export function checkSheets(workbook, result, L, ui) {
     const requested = {};
     for (const request of result.requests ?? []) {
       if (request.memberId !== member.id) continue;
-      for (const date of result.days.map((day) => day.date)) if (date >= request.from && date <= request.to) requested[date] = request.code;
+      for (const date of result.days.map((day) => day.date)) {
+        if (date < request.from || date > request.to) continue;
+        // Several "Hindari" requests on one day combine: "!1" + "!3" = "!13".
+        const before = requested[date];
+        requested[date] = before?.startsWith("!") && request.code.startsWith("!") ? before + request.code.slice(1) : request.code;
+      }
     }
     const activeOn = (date) => (!member.activeFrom || date >= member.activeFrom) && (!member.activeUntil || date <= member.activeUntil);
     const g = Object.fromEntries(ROWS.map((name) => [name, new Array(T).fill(0)]));
@@ -265,7 +270,9 @@ export function checkSheets(workbook, result, L, ui) {
       const eligible = ["1", "2", "3"].includes(code) && !member.eligibleShifts.includes(code) ? 1 : 0;
       v("vEligible", eligible, `IF(OR(AND(${c}="1",${mp("allow1", m)}=0),AND(${c}="2",${mp("allow2", m)}=0),AND(${c}="3",${mp("allow3", m)}=0)),1,0)`);
       v("vOffMax", code === "H" && g.offRun[t] > paramValues.maxOff && r !== "H" ? 1 : 0, `IF(AND(${c}="H",${at("offRun", t)}>${p("maxOff")},${at("req", t)}<>"H"),1,0)`);
-      v("vRequest", r !== "" && r !== code ? 1 : 0, `IF(AND(${at("req", t)}<>"",${at("req", t)}<>${c}),1,0)`);
+      // A request is a code to get ("C", "1", "H"…) or, with "!", a shift to avoid ("!3").
+      const broken = r.startsWith("!") ? ["1", "2", "3"].includes(code) && r.slice(1).includes(code) : r !== "" && r !== code;
+      v("vRequest", broken ? 1 : 0, `IF(LEFT(${at("req", t)},1)="!",IF(AND(OR(${c}="1",${c}="2",${c}="3"),ISNUMBER(FIND(${c},${at("req", t)}))),1,0),IF(AND(${at("req", t)}<>"",${at("req", t)}<>${c}),1,0))`);
       v("vInactive", (!g.active[t] && code !== "-") || (g.active[t] && code === "-") ? 1 : 0, `IF(OR(AND(${at("active", t)}=0,${c}<>"-"),AND(${at("active", t)}=1,${c}="-")),1,0)`);
       const from = Math.max(0, t - paramValues.sickFree);
       const sick = paramValues.sickFree > 0 && code === "3" && r !== "3" && codes.slice(from, t).includes("S") ? 1 : 0;
@@ -276,7 +283,9 @@ export function checkSheets(workbook, result, L, ui) {
       v("isolated", inside && code === "H" && work[t - 1] && work[t + 1] ? 1 : 0, inside ? `IF(AND(${c}="H",${prev("work")}=1,${at("work", t + 1)}=1),1,0)` : "0");
       const day12 = (x) => x === "1" || x === "2";
       v("switch", t > H && day12(code) && day12(pc) && code !== pc ? 1 : 0, t > H ? `IF(AND(OR(${c}="1",${c}="2"),OR(${prev("code")}="1",${prev("code")}="2"),${c}<>${prev("code")}),1,0)` : "0");
-      v("fullBlock", g.stretch[t] && g.streak[t] === paramValues.maxWork ? 1 : 0, `IF(AND(${at("stretch", t)}=1,${at("streak", t)}=${p("maxWork")}),1,0)`);
+      // A full stretch then only one day off before work again (wellbeing.mjs).
+      v("shortRecovery", inside && !g.stretch[t] && t > 0 && g.streak[t - 1] >= paramValues.maxWork && codes[t + 1] !== undefined && (W(codes[t + 1]) || (codes[t + 1] === "C" && paramValues.leaveAsWork)) ? 1 : 0,
+        inside ? `IF(AND(${at("stretch", t)}=0,${prev("streak")}>=${p("maxWork")},OR(${at("work", t + 1)}=1,AND(${col(t + 1)}${row("code")}="C",${p("leaveAsWork")}=1))),1,0)` : "0");
       v("longBlock", g.nightRun[t] === 3 ? 1 : 0, `IF(${at("nightRun", t)}=3,1,0)`);
     }
 
@@ -431,7 +440,7 @@ export function checksSheet(workbook, result, L, ui, calc) {
       member, available, availableF, nights, nightsF: `COUNTIF(${codeRange},"3")`, workDays, workDaysF: `(COUNTIF(${codeRange},"1")+COUNTIF(${codeRange},"2")+COUNTIF(${codeRange},"3"))`,
       s1, s2, s1F: `COUNTIF(${codeRange},"1")`, s2F: `COUNTIF(${codeRange},"2")`, fullWeekends, fullWeekendsF,
       longBlocks: sumOf("longBlock"), longBlocksF: sumF("longBlock"), singles: sumOf("single"), singlesF: sumF("single"),
-      isolated: sumOf("isolated"), isolatedF: sumF("isolated"), switches: sumOf("switch"), switchesF: sumF("switch"), fullBlocks: sumOf("fullBlock"), fullBlocksF: sumF("fullBlock"),
+      isolated: sumOf("isolated"), isolatedF: sumF("isolated"), switches: sumOf("switch"), switchesF: sumF("switch"), shortRecovery: sumOf("shortRecovery"), shortRecoveryF: sumF("shortRecovery"),
       weekendDays: month.filter((code, i) => ["1", "2", "3"].includes(code) && [0, 6].includes(new Date(`${calc.dates[H + i]}T00:00:00Z`).getUTCDay())).length,
       weekendDaysF: `SUMPRODUCT(Hitungan!${monthRange(TL.weekend).replaceAll("$", "")}*((${codeRange}="1")+(${codeRange}="2")+(${codeRange}="3")))`,
       hoursOver: grid.weeks.reduce((sum, hours) => sum + Math.max(0, hours - limit), 0),
@@ -506,7 +515,7 @@ export function checksSheet(workbook, result, L, ui, calc) {
     const row = layout.wlb[item.member.id];
     const values = {
       nights: [item.nightsF, item.nights], longBlocks: [item.longBlocksF, item.longBlocks], weekendDays: [item.weekendDaysF, item.weekendDays],
-      fullWeekends: [item.fullWeekendsF, item.fullWeekends], fullBlocks: [item.fullBlocksF, item.fullBlocks], isolated: [item.isolatedF, item.isolated],
+      fullWeekends: [item.fullWeekendsF, item.fullWeekends], shortRecovery: [item.shortRecoveryF, item.shortRecovery], isolated: [item.isolatedF, item.isolated],
       singles: [item.singlesF, item.singles], hoursOver: [item.hoursOverF, item.hoursOver], hoursHeavy: [item.hoursHeavyF, item.hoursHeavy],
       switches: [item.switchesF, item.switches], overTarget: [`MAX(0,ROUND(${item.workDaysF}-${item.targetF},0))`, Math.max(0, Math.round(item.workDays - item.target))]
     };
@@ -518,12 +527,12 @@ export function checksSheet(workbook, result, L, ui, calc) {
     const deduction = [
       `${P("overTarget")}*${cell("overTarget")}`, `${P("night")}*${cell("nights")}`, `${P("longBlock")}*${cell("longBlocks")}`,
       `IF(${cell("fullWeekends")}=0,${P("noFullWeekend")},IF(${cell("fullWeekends")}=1,${P("oneFullWeekend")},0))`, `${P("weekendDay")}*${cell("weekendDays")}`,
-      `${P("fullBlock")}*${cell("fullBlocks")}`, `${P("singleOff")}*${cell("isolated")}`, `${P("singleWork")}*${cell("singles")}`,
+      `${P("shortRecovery")}*${cell("shortRecovery")}`, `${P("singleOff")}*${cell("isolated")}`, `${P("singleWork")}*${cell("singles")}`,
       `${P("hourOver")}*${cell("hoursOver")}`, `${P("hourHeavy")}*${cell("hoursHeavy")}`, `${P("shiftSwitch")}*${cell("switches")}`
     ].join("+");
     const W = WLB_POINTS;
     const points = W.overTarget * values.overTarget[1] + W.night * item.nights + W.longBlock * item.longBlocks + (item.fullWeekends === 0 ? W.noFullWeekend : item.fullWeekends === 1 ? W.oneFullWeekend : 0) +
-      W.weekendDay * item.weekendDays + W.fullBlock * item.fullBlocks + W.singleOff * item.isolated + W.singleWork * item.singles + W.hourOver * item.hoursOver + W.hourHeavy * item.hoursHeavy + W.shiftSwitch * item.switches;
+      W.weekendDay * item.weekendDays + W.shortRecovery * item.shortRecovery + W.singleOff * item.isolated + W.singleWork * item.singles + W.hourOver * item.hoursOver + W.hourHeavy * item.hoursHeavy + W.shiftSwitch * item.switches;
     const inTeam = grids[index].codes.slice(H, H + M).filter((code) => code !== "-").length >= 10;
     const presentDaysF = `(${M}-COUNTIF(Hitungan!${monthRange(grids[index].row("code")).replaceAll("$", "")},"-"))`;
     const score = inTeam ? Math.max(0, 100 - points) : "–";
@@ -542,7 +551,7 @@ export function checksSheet(workbook, result, L, ui, calc) {
   setCell(sheet.getCell(layout.wlbTeam, 16), result.wellbeing?.team ?? "–", { color: C.note });
   const W = WLB_POINTS;
   paragraph(sheet, layout.wlbTeam + 2,
-    `Skor = 100 dikurangi: ${W.night} per malam Shift 3, ${W.longBlock} per blok 3 malam, ${W.weekendDay} per hari kerja Sabtu/Minggu, ${W.noFullWeekend} bila tidak ada libur Sabtu–Minggu penuh (${W.oneFullWeekend} bila hanya 1 kali), ${W.fullBlock} per ${calc.paramValues.maxWork} hari kerja berturut-turut (cuti dihitung), ${W.singleOff} per libur hanya 1 hari, ${W.singleWork} per masuk hanya 1 hari, ${W.hourOver} per jam di atas batas mingguan dan ${W.hourHeavy} lagi per jam di atas batas + 4, ${W.shiftSwitch} per pindah Shift 1↔2 dalam satu blok, dan ${W.overTarget} per hari kerja di atas target. Baik = 80 ke atas, Cukup = 65–79, Perlu perhatian = di bawah 65. Orang yang kurang dari 10 hari di tim tidak diberi skor.`,
+    `Skor = 100 dikurangi: ${W.night} per malam Shift 3, ${W.longBlock} per blok 3 malam, ${W.weekendDay} per hari kerja Sabtu/Minggu, ${W.noFullWeekend} bila tidak ada libur Sabtu–Minggu penuh (${W.oneFullWeekend} bila hanya 1 kali), ${W.singleOff} per libur hanya 1 hari, ${W.shortRecovery} lagi bila libur 1 hari itu datang setelah ${calc.paramValues.maxWork} hari kerja berturut-turut (cuti dihitung; ${calc.paramValues.maxWork} hari kerja lalu 2 hari libur tidak mengurangi skor), ${W.singleWork} per masuk hanya 1 hari, ${W.hourOver} per jam di atas batas mingguan dan ${W.hourHeavy} lagi per jam di atas batas + 4, ${W.shiftSwitch} per pindah Shift 1↔2 dalam satu blok, dan ${W.overTarget} per hari kerja di atas target. Baik = 80 ke atas, Cukup = 65–79, Perlu perhatian = di bawah 65. Orang yang kurang dari 10 hari di tim tidak diberi skor.`,
     layout.lastColumn, { italic: true, color: C.note, size: 9, charsPerLine: 170 });
 
   // Colours read only cells of this sheet (a colour rule that reads another sheet breaks Excel).

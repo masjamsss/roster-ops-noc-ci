@@ -115,6 +115,10 @@ test("the default best-result portfolio: the normal search first, then 5 variant
     assert.ok(!variant.weights, "variants scale the current weights instead of fixing numbers");
     assert.ok(variant.weightScale || variant.search);
   }
+  // 5 Oct review: the two variants that never won in six months were replaced by
+  // a wide search and a rhythm (work-life) variant (IDEAL weekdays 46 -> 52).
+  assert.ok(DEFAULT_PORTFOLIO.some((variant) => variant.search?.beamScale === 3 && variant.search?.nightChoices === 3), "a wide search");
+  assert.ok(DEFAULT_PORTFOLIO.some((variant) => variant.weightScale?.isolatedOff > 1 && variant.weightScale?.shortWorkBlock > 1), "a work-life rhythm variant");
 });
 
 test("updating a month: the current roster is kept where possible, earlier days are frozen, every change is listed", { timeout: 600_000 }, async () => {
@@ -266,4 +270,20 @@ test("not perfect yet: extra attempts aimed at what is left, then an honest repo
 test("a quick single search does not claim to be perfect", { timeout: 300_000 }, async () => {
   const result = await generateRoster({ config: smallConfig(), calendars: noHolidays(2027), history: emptyHistory });
   assert.equal(result.search.perfect, null);
+});
+
+test("special requests: 'Hindari Shift 3' keeps the person off nights on those dates, and the audit checks it", { timeout: 300_000 }, async () => {
+  const requests = [
+    { memberId: "willy", name: "Willy", from: "2026-10-01", to: "2026-10-12", code: "!3", kind: "Hindari Shift 3", source: "test" },
+    { memberId: "hilvani", name: "Hilvani", from: "2026-10-05", to: "2026-10-09", code: "!1", kind: "Hindari Shift 1", source: "test" }
+  ];
+  const result = await generateRoster({ config: makeConfig({ year: 2026, month: 10, requests, search: { beamWidth: 1500 } }), calendars: noHolidays(2026), history: septemberHistory });
+  assert.ok(result.audit.ok);
+  const between = (id, from, to) => result.days.filter((day) => day.date >= from && day.date <= to).map((day) => result.schedule[id][day.date]);
+  const valid = new Set(["1", "2", "3", "H", "C", "S", "T", "-"]);
+  for (const [id, row] of Object.entries(result.schedule)) for (const code of Object.values(row)) assert.ok(valid.has(code), `${id}: "${code}" is not a roster code`);
+  assert.ok(!between("willy", "2026-10-01", "2026-10-12").includes("3"), between("willy", "2026-10-01", "2026-10-12").join(""));
+  assert.ok(between("willy", "2026-10-01", "2026-10-12").filter((code) => code === "1" || code === "2").length >= 5, "Willy still works day shifts then");
+  assert.ok(!between("hilvani", "2026-10-05", "2026-10-09").includes("1"));
+  assert.ok(result.schedule.willy && result.days.some((day) => day.date > "2026-10-12" && result.schedule.willy[day.date] === "3"), "nights again after the dates");
 });

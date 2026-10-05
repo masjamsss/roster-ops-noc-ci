@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import ExcelJS from "exceljs";
 import { DEFAULT_COVERAGE, DEFAULT_RULES, DEFAULT_TEAM } from "../src/defaults.mjs";
-import { appendRequest, createInputWorkbook, INPUT_LAYOUT, readInputWorkbook, upgradeInputWorkbook } from "../src/input-workbook.mjs";
+import { appendMember, appendRequest, createInputWorkbook, INPUT_LAYOUT, readInputWorkbook, upgradeInputWorkbook } from "../src/input-workbook.mjs";
 import { buildConfig } from "../src/settings.mjs";
 
 async function freshWorkbook() {
@@ -232,6 +232,21 @@ test("an older Data Roster.xlsx gets the newer Aturan rows added, with defaults,
   assert.deepEqual(await upgradeInputWorkbook(file), [], "nothing to add the second time");
 });
 
+test("an older Data Roster gets the newer request kinds in its 'Jenis' list (Hindari Shift 1/2/3)", async () => {
+  const file = await freshWorkbook();
+  const OLD = '"Cuti,Sakit,Training/Dinas,Minta libur,Minta Shift 1,Minta Shift 2,Minta Shift 3"';
+  const kindCell = (workbook, offset) => workbook.getWorksheet(INPUT_LAYOUT.requests.sheet).getRow(INPUT_LAYOUT.requests.firstRow + offset).getCell(5);
+  await edit(file, (workbook) => {
+    for (let offset = 0; offset < INPUT_LAYOUT.requests.rows; offset += 1) kindCell(workbook, offset).dataValidation = { ...kindCell(workbook, offset).dataValidation, formulae: [OLD] };
+  });
+  const added = await upgradeInputWorkbook(file);
+  assert.ok(added.some((label) => /Hindari Shift 3/.test(label)), added.join(" | "));
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(file);
+  for (const offset of [0, INPUT_LAYOUT.requests.rows - 1]) assert.match(kindCell(workbook, offset).dataValidation.formulae[0], /Hindari Shift 1,Hindari Shift 2,Hindari Shift 3/);
+  assert.deepEqual(await upgradeInputWorkbook(file), [], "nothing to change the second time");
+});
+
 test("the Aturan sheet has a row for 3-night blocks only when forced (Ya by default)", async () => {
   const file = await freshWorkbook();
   assert.equal((await readInputWorkbook(file)).rules.longNightBlockOnlyIfNeeded, true);
@@ -241,4 +256,18 @@ test("the Aturan sheet has a row for 3-night blocks only when forced (Ya by defa
     });
   });
   assert.equal((await readInputWorkbook(file)).rules.longNightBlockOnlyIfNeeded, false);
+});
+
+test("a temporary member from outside the team can be added for a few dates; a bad row leaves the file untouched", async () => {
+  const file = await freshWorkbook();
+  const added = await appendMember(file, { name: "Doni", gender: "L", shifts: ["3"], from: "2026-10-05", to: "2026-10-06" });
+  const input = await readInputWorkbook(file);
+  const doni = input.members.find((member) => member.name === "Doni");
+  assert.ok(doni, `row ${added.row}`);
+  assert.deepEqual(doni.eligibleShifts, ["3"]);
+  assert.equal(doni.activeFrom, "2026-10-05");
+  assert.equal(doni.activeUntil, "2026-10-06");
+  const before = (await readInputWorkbook(file)).members.length;
+  await assert.rejects(appendMember(file, { name: "Doni", gender: "L", shifts: ["3"], from: "2026-10-07", to: "2026-10-07" }), /ganda|sama dengan/);
+  assert.equal((await readInputWorkbook(file)).members.length, before, "the duplicate was not kept");
 });

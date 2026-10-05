@@ -9,7 +9,7 @@ import { generateRoster } from "./engine.mjs";
 import { explainFileError, RosterError } from "./errors.mjs";
 import { writeRosterWorkbook } from "./excel-export.mjs";
 import { resolveHolidays } from "./holiday-calendar.mjs";
-import { createInputWorkbook, readInputWorkbook, upgradeInputWorkbook } from "./input-workbook.mjs";
+import { createInputWorkbook, KINDS_UPGRADE, readInputWorkbook, upgradeInputWorkbook } from "./input-workbook.mjs";
 import { formatPeriode, formatTanggal } from "./labels-id.mjs";
 import { formatRosterCsv } from "./roster-csv.mjs";
 import { buildConfig } from "./settings.mjs";
@@ -45,7 +45,14 @@ export async function siapkanData({ root }) {
   return { created: true, file: paths.inputWorkbook };
 }
 
-const upgradeNote = (labels) => `Data Roster.xlsx dilengkapi baris baru di sheet Aturan: ${labels.map((label) => `"${label}"`).join(", ")}. Isinya nilai bawaan; ubah bila perlu.`;
+const upgradeNote = (labels) => {
+  const rules = labels.filter((label) => !label.startsWith(KINDS_UPGRADE));
+  const parts = [
+    ...(rules.length ? [`baris baru di sheet Aturan: ${rules.map((label) => `"${label}"`).join(", ")} (isinya nilai bawaan; ubah bila perlu)`] : []),
+    ...labels.filter((label) => label.startsWith(KINDS_UPGRADE))
+  ];
+  return `Data Roster.xlsx dilengkapi ${parts.join("; ")}.`;
+};
 
 async function readAdvanced(paths) {
   if (!(await exists(paths.advancedSettings))) return {};
@@ -189,7 +196,7 @@ export async function previewRoster({ root, monthKey, online = true, fetchImpl, 
   };
 }
 
-export async function buatRoster({ root, monthKey, force = false, online = true, withoutHistory = false, best = false, keep = false, from = null, onProgress, fetchImpl, now = new Date() }) {
+export async function buatRoster({ root, monthKey, force = false, online = true, withoutHistory = false, best = false, keep = false, from = null, lockManual = false, onProgress, fetchImpl, now = new Date() }) {
   const paths = workspacePaths(root);
   const prepared = await siapkanData({ root });
   const input = await readInputWorkbook(paths.inputWorkbook);
@@ -213,14 +220,14 @@ export async function buatRoster({ root, monthKey, force = false, online = true,
       throw new RosterError(
         `Roster ${label} sudah DISETUJUI oleh Operations Manager. Membuat ulang akan mengganti roster yang sudah disetujui ` +
           `(versi lama tetap disimpan di hasil/${key}/arsip). Pilih "buat ulang" hanya bila OM memintanya.`,
-        { needsConfirmation: true, reason: "approved" }
+        { needsConfirmation: true, reason: "approved", manualCount: existing.manualChanges?.length ?? 0 }
       );
     }
     if (existing && existing.manualChanges.length > 0) {
       throw new RosterError(
         `Roster ${label} sudah ada dan sudah diubah manual (${existing.manualChanges.length} perubahan). Membuat ulang akan menggantinya dengan roster baru. ` +
           `Pilih "buat ulang" bila memang ingin mengganti; versi lama tetap disimpan di hasil/${key}/arsip.`,
-        { needsConfirmation: true, reason: "edited" }
+        { needsConfirmation: true, reason: "edited", manualCount: existing.manualChanges.length }
       );
     }
     if (existing) {
@@ -237,6 +244,26 @@ export async function buatRoster({ root, monthKey, force = false, online = true,
     current = await loadMonthCodes(paths, key);
   } catch (error) {
     if (keep || !(error instanceof RosterError)) throw error;
+  }
+  // "Kunci perubahan manual": the admin's own edits in the roster file become
+  // fixed cells (like requests) and the rest of the month is arranged around them.
+  // A leave or request in Data Roster.xlsx for the same person and day is newer
+  // information than the old edit, so that cell is left to the request.
+  let locked = 0;
+  let unlocked = 0;
+  if (current && lockManual) {
+    const requested = (memberId, date) => config.requests.some((request) => request.memberId === memberId && request.from <= date && date <= (request.to ?? request.from));
+    for (const change of current.manualChanges ?? []) {
+      if (change.to === "-") continue;
+      if (requested(change.memberId, change.date)) {
+        unlocked += 1;
+        continue;
+      }
+      config.requests.push({ memberId: change.memberId, name: change.name, from: change.date, to: change.date, code: change.to, kind: "Perubahan manual (dikunci)", source: `Perubahan manual ${change.name} ${formatTanggal(change.date, { pendek: true })}` });
+      locked += 1;
+    }
+    if (locked) warnings.push(`${locked} perubahan manual dikunci; sisa jadwal disusun di sekitarnya.`);
+    if (unlocked) warnings.push(`${unlocked} perubahan manual tidak dikunci karena di tanggal itu sudah ada cuti atau permintaan baru di Data Roster.xlsx (yang baru dipakai).`);
   }
   if (current) {
     config.reference = Object.fromEntries(Object.keys(current.codesById).map((id) => [id, Object.fromEntries(current.dates.map((date, index) => [date, current.codesById[id][index]]))]));
@@ -286,7 +313,7 @@ export async function buatRoster({ root, monthKey, force = false, online = true,
     holidayCalendars: holidays.calendars, holidayNotes: holidays.notes, holidayDifferences: holidays.differences,
     inputFile: "Data Roster.xlsx", historyLabel, manualChanges: history.manualChanges ?? []
   });
-  return { key, label, files, result, archived, warnings, holidayNotes: holidays.notes, holidayDifferences: holidays.differences };
+  return { key, label, files, result, archived, warnings, locked, holidayNotes: holidays.notes, holidayDifferences: holidays.differences };
 }
 
 // Re-checks a roster Excel that someone edited by hand.
@@ -325,7 +352,11 @@ export async function cekRoster({ root, monthKey }) {
   const requestsByDate = {};
   for (const request of setup.requests ?? []) {
     for (const date of loaded.dates) {
-      if (date >= request.from && date <= request.to) (requestsByDate[date] ??= {})[request.memberId] = request.code;
+      if (date < request.from || date > request.to) continue;
+      const day = (requestsByDate[date] ??= {});
+      const before = day[request.memberId];
+      // Several "Hindari Shift X" requests on one day combine ("!1" + "!3" = "!13").
+      day[request.memberId] = before?.startsWith("!") && request.code.startsWith("!") ? before + request.code.slice(1) : request.code;
     }
   }
   const audit = auditTimeline({

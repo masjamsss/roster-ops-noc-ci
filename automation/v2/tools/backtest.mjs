@@ -16,7 +16,9 @@ import ExcelJS from "exceljs";
 import { buatRoster, siapkanData } from "../src/app.mjs";
 import { appendRequest, INPUT_LAYOUT } from "../src/input-workbook.mjs";
 
-const REAL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+// Holidays and the September seed come from the Roster folder; ROSTER_DATA points
+// elsewhere when the tool runs from a copy of the engine (experiments).
+const REAL_ROOT = process.env.ROSTER_DATA ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const MONTHS = ["2026-10", "2026-11", "2026-12", "2027-01", "2027-02", "2027-03"];
 const EVENTS = [
   ["Addin", "2026-11-16", "2026-11-18", "Cuti"], ["Willy", "2026-11-09", "2026-11-09", "Training/Dinas"],
@@ -78,7 +80,8 @@ try {
       `nights ${night.map(nightsOf).join(",")}`, `3-night ${night.map(longOf).join(",")}`, `women S1/S2 ${women.join(" ")}`,
       `quality ${result.quality.serious}p/${result.quality.notices}n${result.quality.serious ? ` (${result.quality.findings.filter((finding) => finding.level === "penting").map((finding) => `${finding.id} ${finding.details.join(", ")}`).join("; ")})` : ""}`, `max week ${Math.max(...weeks)} h`,
       `work-life ${result.wellbeing?.team ?? "-"} (min ${Math.min(...result.wellbeing.members.filter((item) => item.score !== null).map((item) => item.score))})`,
-      result.search.perfect ? `perfect ${result.search.perfect.reached ? "YES" : "no"} (${result.search.perfect.tried} tried, ${result.search.perfect.rounds} extra rounds)` : "perfect -",
+      result.search.perfect ? `perfect ${result.search.perfect.reached ? "YES" : "no"} (${result.search.perfect.tried} tried, ${result.search.perfect.rounds} extra rounds, winner #${result.search.chosenVariant}${result.search.portfolio[result.search.chosenVariant - 1]?.aim ? ` aimed at ${result.search.portfolio[result.search.chosenVariant - 1].aim.join("+")}` : ""})` : "perfect -",
+      `score ${result.search.finalScore}`,
       `${Math.round((Date.now() - started) / 1000)} s`
     ].join(" | "));
   }

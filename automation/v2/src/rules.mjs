@@ -36,6 +36,7 @@ function hardViolation(state, member, code, day, ctx, requested) {
   const shift = ctx.shiftById.get(code);
   const night = code === ctx.nightShiftId;
   if (shift && !member.eligibleShifts.includes(code)) return { rule: "eligibility" };
+  if (shift && ctx.avoid?.[day.dayIndex]?.[member.id]?.has(code)) return { rule: "avoid" };
   if (shift || code === "T") {
     const rules = ctx.rules;
     if (state.previousCode === ctx.nightShiftId && !night) return { rule: "after-night" };
@@ -81,6 +82,8 @@ export function explainTransition(state, member, code, day, ctx, { requested = f
       return `${name} masih aktif di tim, jadi harus dijadwalkan`;
     case "eligibility":
       return `${name} tidak boleh ${KODE_LABEL[code] ?? code}`;
+    case "avoid":
+      return `${name} minta tidak ${KODE_LABEL[code] ?? code} pada tanggal ini`;
     case "after-night":
       return `${name} baru selesai Shift 3 kemarin`;
     case "night-recovery":

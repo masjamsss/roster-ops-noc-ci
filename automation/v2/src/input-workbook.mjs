@@ -22,7 +22,12 @@ export const REQUEST_KINDS = Object.freeze([
   ["Minta libur", "H"],
   ["Minta Shift 1", "1"],
   ["Minta Shift 2", "2"],
-  ["Minta Shift 3", "3"]
+  ["Minta Shift 3", "3"],
+  // Special requests (3 Oct): can work that day, but not this shift (an evening
+  // class, a morning appointment). Several may cover the same day.
+  ["Hindari Shift 1", "!1"],
+  ["Hindari Shift 2", "!2"],
+  ["Hindari Shift 3", "!3"]
 ]);
 
 const RULE_ROWS = Object.freeze([
@@ -345,22 +350,37 @@ function writeRuleRow(row, rule, value) {
 // the others, holding the default, so the admin can see and change them.
 // Nothing else is touched; the file is written only when a row is missing, and
 // put back as it was if the result does not read back cleanly.
+// What an upgrade added besides Aturan rows (shown to the admin after the labels).
+export const KINDS_UPGRADE = "pilihan Jenis baru di sheet Cuti & Permintaan";
+
 export async function upgradeInputWorkbook(file) {
   const original = await readFile(file);
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(original);
   const sheet = workbook.getWorksheet(INPUT_LAYOUT.rules.sheet);
-  if (!sheet) return [];
   const present = new Set();
   let last = 4;
-  sheet.eachRow((row, rowNumber) => {
+  sheet?.eachRow((row, rowNumber) => {
     const label = cellText(row.getCell(1));
     if (!label) return;
     present.add(label);
     last = Math.max(last, rowNumber);
   });
-  const missing = RULE_ROWS.filter((rule) => rule.optional && !present.has(rule.label));
-  if (missing.length === 0) return [];
+  const missing = sheet ? RULE_ROWS.filter((rule) => rule.optional && !present.has(rule.label)) : [];
+  // Request kinds added after the workbook was made: its "Jenis" dropdown would
+  // refuse them (for example "Hindari Shift 3").
+  const kindList = `"${REQUEST_KINDS.map(([label]) => label).join(",")}"`;
+  const requests = workbook.getWorksheet(INPUT_LAYOUT.requests.sheet);
+  const header = requests ? findHeaderRow(requests, "no", "nama") : null;
+  const staleCells = [];
+  if (header) {
+    for (let rowNumber = header + 1; rowNumber <= Math.max(requests.rowCount, header + INPUT_LAYOUT.requests.rows); rowNumber += 1) {
+      const cell = requests.getRow(rowNumber).getCell(5);
+      const formula = cell.dataValidation?.type === "list" ? String(cell.dataValidation.formulae?.[0] ?? "") : "";
+      if (formula.includes("Cuti") && formula !== kindList) staleCells.push(cell);
+    }
+  }
+  if (missing.length === 0 && staleCells.length === 0) return [];
   try {
     await readInputWorkbook(file);
   } catch {
@@ -368,6 +388,9 @@ export async function upgradeInputWorkbook(file) {
   }
   const values = ruleValues(DEFAULT_RULES, DEFAULT_SHIFTS);
   missing.forEach((rule, index) => writeRuleRow(sheet.getRow(last + 1 + index), rule, values[rule.key]));
+  const known = new Set(staleCells.flatMap((cell) => String(cell.dataValidation.formulae[0]).replace(/"/g, "").split(",")));
+  const newKinds = REQUEST_KINDS.map(([label]) => label).filter((label) => !known.has(label));
+  for (const cell of staleCells) cell.dataValidation = { ...cell.dataValidation, formulae: [kindList] };
   await workbook.xlsx.writeFile(file);
   try {
     await readInputWorkbook(file);
@@ -375,7 +398,7 @@ export async function upgradeInputWorkbook(file) {
     await writeFile(file, original);
     return [];
   }
-  return missing.map((rule) => rule.label);
+  return [...missing.map((rule) => rule.label), ...(staleCells.length ? [`${KINDS_UPGRADE}: ${newKinds.join(", ")}`] : [])];
 }
 
 // ---------- append (used by the CLI "cuti" command and by Claude) ----------
@@ -414,6 +437,39 @@ export async function appendRequest(file, { name, from, to, kind = "Cuti", note 
     throw error;
   }
   return { row: rowNumber, name: canonical, kind: kindLabel };
+}
+
+// Adds a member to the "Anggota" sheet, e.g. someone from outside the team for
+// the dates the team cannot cover (the console offers this when a month cannot
+// be made). Validates the whole workbook and puts the original file back if the
+// new row is invalid.
+export async function appendMember(file, { name, gender = "L", shifts = ["1", "2", "3"], from = null, to = null }) {
+  const original = await readFile(file);
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(original);
+  const sheet = workbook.getWorksheet(INPUT_LAYOUT.members.sheet);
+  if (!sheet) throw new RosterError('Data Roster.xlsx tidak punya sheet "Anggota".');
+  const header = findHeaderRow(sheet, "no", "nama");
+  let rowNumber = header + 1;
+  while ([2, 3].some((column) => cellText(sheet.getRow(rowNumber).getCell(column)) !== "")) rowNumber += 1;
+  const row = sheet.getRow(rowNumber);
+  if (cellText(row.getCell(1)) === "") row.getCell(1).value = rowNumber - header;
+  row.getCell(2).value = String(name).trim();
+  row.getCell(4).value = gender;
+  ["1", "2", "3"].forEach((shiftId, index) => (row.getCell(5 + index).value = shifts.includes(shiftId) ? "Ya" : "Tidak"));
+  for (const [column, date] of [[8, from], [9, to]]) {
+    if (!date) continue;
+    row.getCell(column).value = utcDate(date);
+    row.getCell(column).numFmt = "dd/mm/yyyy";
+  }
+  await workbook.xlsx.writeFile(file);
+  try {
+    await readInputWorkbook(file);
+  } catch (error) {
+    await writeFile(file, original);
+    throw error;
+  }
+  return { row: rowNumber, name: String(name).trim() };
 }
 
 // ---------- read ----------
@@ -535,7 +591,8 @@ export async function readInputWorkbook(file) {
           problems.push(`${where}: ${member.name} tidak boleh ${KODE_LABEL[code]}.`);
           continue;
         }
-        const clash = requests.find((other) => other.memberId === member.id && other.code !== code && other.from <= to && from <= other.to);
+        const avoid = (value) => value.startsWith("!");
+        const clash = requests.find((other) => other.memberId === member.id && other.code !== code && !(avoid(other.code) && avoid(code)) && other.from <= to && from <= other.to);
         if (clash) {
           const day = from > clash.from ? from : clash.from;
           problems.push(`${where}: bentrok dengan baris ${clash.row} (${member.name} ${formatTanggal(day, { pendek: true })}: ${clash.kind} dan ${REQUEST_KINDS.find(([, value]) => value === code)[0]}).`);

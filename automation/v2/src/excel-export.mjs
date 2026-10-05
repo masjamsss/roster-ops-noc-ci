@@ -550,7 +550,7 @@ function summarySheet(workbook, result, L, checks) {
       rules: levelColors.map(([label, bg, text], index) => ({ type: "expression", priority: 80 + index, formulae: [`E${firstWlbRow}="${label}"`], style: { font: { color: { argb: text }, bold: true }, fill: { type: "pattern", pattern: "solid", bgColor: { argb: bg } } } }))
     });
     row += 1;
-    paragraph(sheet, row, "Skor 100 dikurangi beban yang nyata: malam, blok 3 malam, kerja Sabtu/Minggu, tanpa libur Sabtu–Minggu penuh, 5 hari kerja berturut-turut, libur atau masuk hanya 1 hari, jam di atas batas, pindah Shift 1↔2 dalam satu blok, dan hari di atas target. Baik = 80 ke atas, Cukup = 65–79, Perlu perhatian = di bawah 65. Rumus dan angka tiap beban ada di sheet Pemeriksaan.", lastColumn, { italic: true, color: C.note, size: 9, charsPerLine: 160 });
+    paragraph(sheet, row, "Skor 100 dikurangi beban yang nyata: malam, blok 3 malam, kerja Sabtu/Minggu, tanpa libur Sabtu–Minggu penuh, libur atau masuk hanya 1 hari (lebih berat bila libur 1 hari itu setelah 5 hari kerja), jam di atas batas, pindah Shift 1↔2 dalam satu blok, dan hari di atas target. Baik = 80 ke atas, Cukup = 65–79, Perlu perhatian = di bawah 65. Rumus dan angka tiap beban ada di sheet Pemeriksaan.", lastColumn, { italic: true, color: C.note, size: 9, charsPerLine: 160 });
   }
 
   // Print: page 1 = conclusion and rule checks, page 2 = workload and notes.

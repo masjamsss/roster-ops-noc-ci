@@ -40,6 +40,8 @@ test("a member joining mid-month gets a share only for the days in the team", { 
   const budi = result.memberSummary.budi.workTarget;
   const full = result.memberSummary.rizky.workTarget;
   assert.ok(budi >= Math.floor((full * 13) / 31) && budi <= Math.ceil((full * 13) / 31), `Budi ${budi} vs full-month ${full}`);
+  // He is not in the team yet on the 1st, so the notes do not call it "his turn".
+  assert.ok(!result.notes.some((note) => /seharusnya Budi/.test(note)), result.notes.join("\n"));
 });
 
 test("a fixed target in the Aturan sheet still works: over and under are both penalized", { timeout: 120_000 }, async () => {
@@ -48,11 +50,17 @@ test("a fixed target in the Aturan sheet still works: over and under are both pe
   assert.ok(result.memberSummary.hilvani.workDays <= 22);
 });
 
-test("a larger team stays fast, valid, and gets a hint to raise the ideal staffing", { timeout: 120_000 }, async () => {
+test("a larger team stays fast, valid, and gets a hint to raise the ideal staffing", { timeout: 600_000 }, async () => {
   const team = [...DEFAULT_TEAM, { id: "budi", name: "Budi", eligibleShifts: ["1", "2", "3"] }, { id: "citra", name: "Citra", gender: "P", eligibleShifts: ["1", "2"] }];
-  const started = Date.now();
+  // Relative to the normal team on the same machine (a fixed 60 s failed on
+  // GitHub's 2-core Windows runner). Measured on the Mac: 6 people 26 s, 8 people 23 s.
+  let started = Date.now();
+  await generateRoster({ config: makeConfig({ year: 2026, month: 10 }), calendars, history });
+  const normal = Date.now() - started;
+  started = Date.now();
   const result = await generateRoster({ config: makeConfig({ year: 2026, month: 10, team }), calendars, history });
-  assert.ok(Date.now() - started < 60_000, "finishes within a minute");
+  const larger = Date.now() - started;
+  assert.ok(larger < 2 * normal + 5_000, `8 people ${larger} ms vs 6 people ${normal} ms`);
   assert.equal(result.audit.ok, true);
   assert.ok(result.notes.some((note) => /naikkan jumlah "ideal"/.test(note)));
   const newcomers = ["budi", "citra"].map((id) => result.memberSummary[id]);

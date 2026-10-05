@@ -13,7 +13,11 @@ export const KODE_LABEL = Object.freeze({
   C: "Cuti",
   S: "Sakit",
   T: "Training/Dinas",
-  "-": "Tidak aktif"
+  "-": "Tidak aktif",
+  // Special requests: the person can work that day, but not this shift.
+  "!1": "Bukan Shift 1 (Pagi)",
+  "!2": "Bukan Shift 2 (Siang)",
+  "!3": "Bukan Shift 3 (Malam)"
 });
 
 export function namaBulan(month) {

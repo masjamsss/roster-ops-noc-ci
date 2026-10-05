@@ -200,3 +200,32 @@ test("the readiness check says in plain words what is in place and what is missi
   assert.equal(bad.ok, false);
   assert.ok(bad.items.some((item) => item.level === "masalah" && /belum ada/.test(item.text)), bad.items.map((item) => item.text).join("\n"));
 });
+
+test("lock the manual edits and fill the rest: the admin's change stays, everything else is rearranged around it", { timeout: 600_000 }, async () => {
+  const { root } = await newRoot();
+  await siapkanData({ root });
+  const first = await buatRoster({ root, monthKey: "2026-10", online: false });
+  // Hilvani (row 8) gets 15 Oct off by hand (column C = 1 Oct, so 15 Oct = column 17).
+  const working = first.result.schedule.hilvani["2026-10-15"];
+  assert.notEqual(working, "H", "she was working that day");
+  await editWorkbook(first.files.excel, (workbook) => (workbook.getWorksheet("Roster").getCell(8, 17).value = "H"));
+  const filled = await buatRoster({ root, monthKey: "2026-10", online: false, force: true, keep: true, lockManual: true, now: new Date("2026-09-30T08:00:00") });
+  assert.equal(filled.result.schedule.hilvani["2026-10-15"], "H", "the manual change is kept");
+  assert.equal(filled.result.audit.ok, true, "every rule holds around it");
+  assert.equal(filled.locked, 1);
+  assert.ok(filled.warnings.some((warning) => /1 perubahan manual dikunci/.test(warning)), filled.warnings.join("\n"));
+});
+
+test("lock the manual edits: the console is told how many there are, and a newer request for the same day wins over the old edit", { timeout: 600_000 }, async () => {
+  const { root } = await newRoot();
+  await siapkanData({ root });
+  const first = await buatRoster({ root, monthKey: "2026-10", online: false });
+  await editWorkbook(first.files.excel, (workbook) => (workbook.getWorksheet("Roster").getCell(8, 17).value = "H"));
+  await assert.rejects(buatRoster({ root, monthKey: "2026-10", online: false }), (error) => error.details?.reason === "edited" && error.details.manualCount === 1);
+  // Later Hilvani asks to work Shift 1 that day: the request is newer than the edit.
+  await appendRequest(workspacePaths(root).inputWorkbook, { name: "Hilvani", from: "2026-10-15", to: "2026-10-15", kind: "Minta Shift 1" });
+  const filled = await buatRoster({ root, monthKey: "2026-10", online: false, force: true, keep: true, lockManual: true, now: new Date("2026-09-30T08:00:00") });
+  assert.equal(filled.result.schedule.hilvani["2026-10-15"], "1");
+  assert.equal(filled.locked, 0);
+  assert.ok(filled.warnings.some((warning) => /1 perubahan manual tidak dikunci/.test(warning)), filled.warnings.join("\n"));
+});

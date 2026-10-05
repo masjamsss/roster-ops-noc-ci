@@ -214,3 +214,13 @@ test("a person's second 3-night block in the month costs more than their first, 
   assert.equal(state.longNightBlocks, 2);
   assert.equal(scores[9] - scores[2], 300, "the second third night pays the repeat penalty once");
 });
+
+test("'Hindari Shift X' (avoid a shift on a date) is a hard rule; other shifts that day stay allowed", () => {
+  const avoidCtx = { ...ctx, avoid: { 1: { rizky: new Set(["3"]) } } };
+  let state = initialMemberState(deriveMemberState(["H", "H"], avoidCtx), man);
+  state = transitionMember(state, man, "1", day(0), avoidCtx).state;
+  assert.ok(transitionMember(state, man, "3", day(1), ctx), "without the request Shift 3 would be allowed");
+  assert.equal(transitionMember(state, man, "3", day(1), avoidCtx), null, "no Shift 3 on the avoided day");
+  assert.ok(transitionMember(state, man, "1", day(1), avoidCtx), "Shift 1 is still fine");
+  assert.match(explainTransition(state, man, "3", day(1), avoidCtx), /Rizky minta tidak Shift 3/);
+});

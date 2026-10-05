@@ -150,13 +150,17 @@ export const DEFAULT_LOCAL_SEARCH = Object.freeze({ enabled: true, maxPasses: 40
 // Best-result mode ("buat --terbaik"): the normal search plus 5 variants that
 // steer it differently. Every result is scored with the normal weights and the
 // best one is kept. About 6 times slower; for the final version of a month.
+// 5 Oct review: "lighter rhythm" and "lighter hours" never won in six months and
+// were replaced by a wide search and a stronger rhythm (work-life). Six-month
+// backtest: IDEAL weekdays 46 -> 52, weekend days worked per person 18-28 ->
+// 22-26, serious findings 3 -> 3, perfect months 4 -> 4, heaviest week 43 h.
 export const DEFAULT_PORTFOLIO = Object.freeze([
   {},
   { search: { beamScale: 1.5 } },
   { search: { nightChoices: 3 } },
-  { weightScale: { singleWorkDay: 0.6, isolatedOff: 0.67, shortWorkBlock: 0.5 } },
+  { search: { beamScale: 3, nightChoices: 3 } },
   { weightScale: { weekendSpread: 1.5, weekendSpreadDaily: 1.5, nightSpreadLight: 2, nightSpreadHeavy: 1.5 } },
-  { weightScale: { weeklyHoursOver: 0.53, weeklyHoursHeavy: 0.5 } }
+  { weightScale: { isolatedOff: 2, singleWorkDay: 1.5, shortWorkBlock: 2, weekendSpread: 1.3 } }
 ]);
 
 // Internal config consumed by the engine. `team` rows may carry activeFrom/activeUntil.
