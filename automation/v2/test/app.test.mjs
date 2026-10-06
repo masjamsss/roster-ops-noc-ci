@@ -247,7 +247,9 @@ test("before leave is saved, its impact is checked: still possible, or why not",
   assert.equal(blocked[0].ok, false);
   assert.match(blocked[0].reason, /Shift 3 tidak mungkin terisi/);
   assert.equal(blocked[0].date, "2026-10-16");
-  assert.ok(Date.now() - started < 10_000, "an answer within seconds");
+  assert.ok(blocked[0].suggestions.some((text) => /Bisa bila .*dimulai/.test(text)), blocked[0].suggestions.join("\n"));
+  assert.ok(blocked[0].suggestions.some((text) => /orang luar tim/.test(text)), blocked[0].suggestions.join("\n"));
+  assert.ok(Date.now() - started < 30_000, "an answer within seconds");
   const unknown = await cekDampakPermintaan({ root, request: { memberId: "arman", name: "Arman", from: "2026-12-01", to: "2026-12-02", code: "C", kind: "Cuti" } });
   assert.equal(unknown[0].ok, null, "December cannot be checked before November exists");
   assert.match(unknown[0].reason, /belum bisa dicek/);

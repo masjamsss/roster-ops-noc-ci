@@ -2,10 +2,10 @@
 import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { auditTimeline } from "./audit.mjs";
-import { addMonths, isWeekend, monthBounds, monthKey as toMonthKey, parseMonthKey } from "./date-utils.mjs";
+import { addDays, addMonths, isoDate, isWeekend, monthBounds, monthKey as toMonthKey, parseMonthKey } from "./date-utils.mjs";
 import { buildDays } from "./days.mjs";
 import { DEFAULT_PORTFOLIO } from "./defaults.mjs";
-import { generateRoster, prepareMonth } from "./engine.mjs";
+import { canBeMade, generateRoster, helperSuggestion, prepareMonth } from "./engine.mjs";
 import { exhaustiveSearch, nightCoverageCheck } from "./exhaustive.mjs";
 import { explainFileError, RosterError } from "./errors.mjs";
 import { writeRosterWorkbook } from "./excel-export.mjs";
@@ -270,22 +270,50 @@ export async function cekDampakPermintaan({ root, request, requests = [request],
         continue;
       }
       const holidays = await resolveHolidays({ years: horizonYears(key, config.period.lookaheadDays), directory: paths.holidaysDir, online: false, now });
-      const { input: month } = prepareMonth({ config, calendars: holidays.calendars, history });
+      const context = { config, calendars: holidays.calendars, history };
+      // Not possible: the nearest dates that would be, and the helper that would make it work.
+      const blocked = (reason, date) => results.push({ key, label, ok: false, reason, date, suggestions: alternatives(context, requests, date) });
+      let month;
+      try {
+        month = prepareMonth(context).input;
+      } catch (error) {
+        if (!(error instanceof RosterError)) throw error;
+        if (error.details?.inputConflict || !error.details?.date) results.push({ key, label, ok: false, reason: error.message.split("\n")[0], date: error.details?.date, suggestions: [] });
+        else blocked(error.message.split("\n")[0], error.details.date);
+        continue;
+      }
       const proof = nightCoverageCheck(month);
       if (!proof.ok) {
-        results.push({ key, label, ok: false, reason: proof.reason, date: proof.date });
+        blocked(proof.reason, proof.date);
         continue;
       }
       const found = exhaustiveSearch(month, { budgetMs });
       if (found.status === "found") results.push({ key, label, ok: true });
-      else if (found.status === "impossible") results.push({ key, label, ok: false, reason: `Tidak ada susunan yang memenuhi semua aturan; susunan mana pun berhenti paling lambat pada ${formatTanggal(found.deepest.date, { denganHari: true })}.`, date: found.deepest.date });
+      else if (found.status === "impossible") blocked(`Tidak ada susunan yang memenuhi semua aturan; susunan mana pun berhenti paling lambat pada ${formatTanggal(found.deepest.date, { denganHari: true })}.`, found.deepest.date);
       else unsure("belum bisa dipastikan dalam waktu pengecekan; hasil pastinya terlihat saat roster dibuat.");
     } catch (error) {
       if (!(error instanceof RosterError)) throw error;
-      results.push({ key, label, ok: false, reason: error.message.split("\n")[0], date: error.details?.date });
+      results.push({ key, label, ok: false, reason: error.message.split("\n")[0], date: error.details?.date, suggestions: [] });
     }
   }
   return results;
+}
+
+// For a new leave or request that makes a month impossible: the same leave moved
+// by a few days (nearest first, up to 2 that work), and a temporary helper.
+function alternatives(context, requests, date) {
+  const suggestions = [];
+  const others = context.config.requests.filter((item) => !requests.includes(item) && item.source !== "Permintaan baru");
+  for (const offset of [1, -1, 2, -2, 3, -3, 4, -4, 5, -5]) {
+    if (suggestions.length >= 2) break;
+    const moved = requests.map((item) => ({ ...item, from: isoDate(addDays(item.from, offset)), to: isoDate(addDays(item.to, offset)), source: "Permintaan baru" }));
+    if (!canBeMade({ ...context, config: { ...context.config, requests: [...others, ...moved] } })) continue;
+    const first = moved[0];
+    suggestions.push(`Bisa bila ${first.kind.toLowerCase()} ${first.name} dimulai ${formatTanggal(first.from, { denganHari: true })}${first.to !== first.from ? ` (sampai ${formatTanggal(first.to, { denganHari: true })})` : ""}${moved.length > 1 ? ", begitu juga minggu-minggu berikutnya" : ""}.`);
+  }
+  const helper = date ? helperSuggestion(context, date) : null;
+  if (helper) suggestions.push(`Atau tetap pada tanggal ini: ${helper.charAt(0).toLowerCase()}${helper.slice(1)}`);
+  return suggestions;
 }
 
 export async function buatRoster({ root, monthKey, force = false, online = true, withoutHistory = false, best = false, keep = false, from = null, lockManual = false, onProgress, fetchImpl, now = new Date() }) {

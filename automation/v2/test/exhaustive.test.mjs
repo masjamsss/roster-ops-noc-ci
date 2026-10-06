@@ -99,3 +99,32 @@ test("leave, training or requested shifts that by themselves exceed the work-day
   });
   assert.ok(Date.now() - started < 5000, "before any search");
 });
+
+const request = (memberId, code, from, to = from) => ({ memberId, name: memberId[0].toUpperCase() + memberId.slice(1), from, to, code, kind: code, source: "test" });
+
+test("one person's own requests that cannot all be met are named at once, with the rule and the dates", async () => {
+  for (const [first, second, rule] of [["2", "1", /istirahat|mundur/], ["3", "1", /Shift 3/]]) {
+    const started = Date.now();
+    const requests = [request("willy", first, "2026-10-14"), request("willy", second, "2026-10-15")];
+    await assert.rejects(generateRoster({ config: makeConfig({ year: 2026, month: 10, requests }), calendars, history }), (error) => {
+      assert.match(error.message, /Willy/);
+      assert.match(error.message, /14 Okt/);
+      assert.match(error.message, /15 Okt/);
+      assert.match(error.message, rule);
+      assert.equal(error.details.inputConflict, true);
+      assert.equal(error.details.date, "2026-10-15");
+      return true;
+    });
+    assert.ok(Date.now() - started < 5000, `before any search (${Date.now() - started} ms)`);
+  }
+});
+
+test("when a month cannot be made, the admin gets concrete ways out that the program has tried and that work", { timeout: 300_000 }, async () => {
+  await assert.rejects(generateRoster({ config: fourNightsAlone(), calendars, history }), (error) => {
+    assert.match(error.message, /Yang bisa dilakukan/);
+    assert.ok(error.details.suggestions.length >= 1, error.message);
+    assert.ok(error.details.suggestions.some((text) => /cuti (Rizky|Willy|Arman)/.test(text)), error.details.suggestions.join("\n"));
+    assert.ok(error.details.suggestions.some((text) => /orang luar tim/.test(text) && /Shift 3/.test(text)), error.details.suggestions.join("\n"));
+    return true;
+  });
+});

@@ -62,6 +62,7 @@ test("an impossible month: the console offers a temporary member from outside th
   // 1 = make next month · y = confirm the review · 1 = add a temporary member · name · shifts · gender · until (Enter = default) · Enter · 0
   const out = await typeInto(root, ["1", "y", "1", "Doni", "3", "L", "", "", "0"]);
   assert.match(out, /Tidak ada susunan yang mungkin pada Rabu, 14 Oktober 2026/, out);
+  assert.match(out, /Yang bisa dilakukan/, "concrete ways out, tried by the program");
   assert.match(out, /anggota sementara/);
   assert.match(out, /Roster Oktober 2026 selesai/, out);
   const input = await readInputWorkbook(paths.inputWorkbook);
@@ -102,6 +103,7 @@ test("menu 8 checks the impact first: leave that makes the month impossible is e
   const out = await typeInto(root, ["8", "5", "1", "13/10/2026", "16/10/2026", "", "", "", "", "0"]);
   assert.match(out, /TIDAK bisa disusun/, out);
   assert.match(out, /Shift 3 tidak mungkin terisi pada Jumat, 16 Oktober 2026/);
+  assert.match(out, /→ Bisa bila cuti Arman dimulai/, "the nearest dates that would work");
   assert.match(out, /Tidak disimpan/);
   assert.equal((await readInputWorkbook(paths.inputWorkbook)).requests.filter((request) => request.name === "Arman").length, 0);
 });

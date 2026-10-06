@@ -3,11 +3,11 @@
 import os from "node:os";
 import { Worker } from "node:worker_threads";
 import { auditTimeline } from "./audit.mjs";
-import { addDays, isoDate, isWeekend, monthKey, parseClock, weekdayIndex } from "./date-utils.mjs";
+import { addDays, diffDays, isoDate, isWeekend, monthBounds, monthKey, parseClock, weekdayIndex } from "./date-utils.mjs";
 import { buildDays } from "./days.mjs";
 import { RosterError } from "./errors.mjs";
 import { deriveMemberState, deriveNightQueue, rollingStats } from "./history.mjs";
-import { formatTanggal, KODE_LABEL } from "./labels-id.mjs";
+import { formatPeriode, formatTanggal, KODE_LABEL } from "./labels-id.mjs";
 import { overtimeCover } from "./backup-plan.mjs";
 import { buildNotes, computeDayRows, computeMemberSummary, findNightBlocks } from "./metrics.mjs";
 import { explainMinimalDays } from "./minimal-days.mjs";
@@ -16,7 +16,7 @@ import { workLifeBalance } from "./wellbeing.mjs";
 import { initialNightState } from "./night-rotation.mjs";
 import { fairnessOffsets, makeEnv, scoreSchedule } from "./objective.mjs";
 import { buildDayPatterns } from "./patterns.mjs";
-import { initialMemberState, isActive, transitionMember } from "./rules.mjs";
+import { explainTransition, initialMemberState, isActive, transitionMember } from "./rules.mjs";
 import { describeCandidate, finishCandidate, runVariant } from "./variant-run.mjs";
 import { EXHAUSTIVE_BUDGET_MS, exhaustiveSearch, nightCoverageCheck } from "./exhaustive.mjs";
 import { diagnoseDeadEnd } from "./search.mjs";
@@ -59,6 +59,63 @@ function historyWindow(history, monthStart, members) {
 }
 
 // Quick upper bound: can this team possibly staff the minimum every day?
+// How a fixed cell reads in a message: "cuti", "minta Shift 1 (Pagi)", or, in
+// update mode, "jadwal yang sudah dijalani" for days before `freezeBefore`.
+function fixedLabel(config, days, d, code) {
+  if (config.freezeBefore && days[d].date < config.freezeBefore && !["T", "C", "S"].includes(code)) return "jadwal yang sudah dijalani";
+  return ({ T: "training/dinas", C: "cuti", S: "sakit", H: "minta libur" })[code] ?? `minta ${KODE_LABEL[code] ?? code}`;
+}
+
+// Each person's own requests, leave and training (and how last month ended) must
+// fit the rules by themselves: "Shift 2 then Shift 1 the next day", or a day shift
+// right after a requested night, can never be met whatever the others do. Checked
+// per person over every possible sequence of that person's days (a relaxation of
+// the whole roster: coverage and the night rotation are left out), so a conflict
+// found here is certain and is named at once with the rule it breaks.
+function checkPersonalRequests(config, members, days, fixed, initialStates, ctx) {
+  const shiftIds = config.shifts.map((shift) => shift.id);
+  const recovery = config.rules.nightRecoveryOffDays;
+  const keyOf = (s) => `${s.previousCode}${s.workStreak}.${s.offStreak}.${s.nightStreak}.${s.lastWorkWasNight ? 1 : 0}.${Math.min(s.restStreak, recovery)}` +
+    `.${Math.min(s.daysSinceSick ?? 99, 15)}.${Math.min(s.daysSinceLongSick ?? 99, 15)}.${Math.min(s.sickRun ?? 0, 3)}`;
+  members.forEach((member, i) => {
+    if (!days.some((_, d) => fixed[d][member.id] !== undefined && fixed[d][member.id] !== "-")) return;
+    const options = (d) => (fixed[d][member.id] !== undefined
+      ? [fixed[d][member.id]]
+      : ["H", ...shiftIds.filter((id) => member.eligibleShifts.includes(id) && !ctx.avoid?.[d]?.[member.id]?.has(id))]);
+    const failed = days.map(() => new Set());
+    let deepest = { d: 0, state: initialStates[i] };
+    const walk = (state, d) => {
+      if (d === days.length) return true;
+      if (d > deepest.d) deepest = { d, state };
+      const key = keyOf(state);
+      if (failed[d].has(key)) return false;
+      for (const code of options(d)) {
+        const moved = transitionMember(state, member, code, days[d], ctx, { requested: fixed[d][member.id] !== undefined });
+        if (moved && walk(moved.state, d + 1)) return true;
+      }
+      failed[d].add(key);
+      return false;
+    };
+    if (walk(initialStates[i], 0)) return;
+    const d = deepest.d;
+    const day = days[d];
+    const code = fixed[d][member.id];
+    const reason = code !== undefined
+      ? explainTransition(deepest.state, member, code, day, ctx, { requested: true })
+      : options(d).map((option) => explainTransition(deepest.state, member, option, day, ctx)).find(Boolean);
+    const from = Math.max(0, d - 3);
+    const near = days.slice(from, d + 1).map((item, k) => {
+      const fixedCode = fixed[from + k][member.id];
+      return fixedCode !== undefined && fixedCode !== "-" ? `${formatTanggal(item.date, { pendek: true })} ${fixedLabel(config, days, from + k, fixedCode)}` : null;
+    }).filter(Boolean);
+    throw new RosterError(
+      `${member.name}: ${near.join(", ")} tidak bisa dipenuhi bersama aturan roster. Pada ${formatTanggal(day.date, { denganHari: true })}: ${reason}. ` +
+        "Ubah salah satunya di sheet Cuti & Permintaan (misalnya beri 1 hari libur di antaranya).",
+      { date: day.date, inputConflict: true }
+    );
+  });
+}
+
 // Leave, training or requested shifts that by themselves break the work-day
 // limit (training and requested shifts count as work, leave too when the Aturan
 // sheet says so), counting on from last month on the 1st. No roster can satisfy
@@ -83,13 +140,7 @@ function checkFixedStreaks(config, members, days, fixed, initialStates) {
       }
       run += 1;
       if (!work || run <= max) return;
-      // Days before `freezeBefore` (update mode) were already worked, not asked for.
-      const label = (offset) => {
-        const fixedCode = fixed[first + offset][member.id];
-        if (config.freezeBefore && days[first + offset].date < config.freezeBefore && !["T", "C"].includes(fixedCode)) return "jadwal yang sudah dijalani";
-        return ({ T: "training/dinas", C: "cuti" })[fixedCode] ?? `minta ${KODE_LABEL[fixedCode]}`;
-      };
-      const names = [...new Set(days.slice(first, d + 1).map((_, offset) => label(offset)))];
+      const names = [...new Set(days.slice(first, d + 1).map((_, offset) => fixedLabel(config, days, first + offset, fixed[first + offset][member.id])))];
       throw new RosterError(
         `${member.name}: ${names.join(", ")} ${formatTanggal(days[first].date, { pendek: true })} – ${formatTanggal(day.date, { pendek: true })}` +
           `${first === 0 && initialStates[i].workStreak ? ` (sambungan ${initialStates[i].workStreak} hari kerja dari bulan lalu)` : ""} = ${run} hari kerja berturut-turut, padahal maksimal ${max} hari kerja berturut-turut ` +
@@ -322,6 +373,7 @@ export function prepareMonth({ config, calendars, history }) {
     weekHours: window.dates.length ? weekHoursAtStart(historyCodes[i], bounds.start, ctx.netHours) : 0
   }));
   checkFixedStreaks(config, members, days, fixed, initialStates);
+  checkPersonalRequests(config, members, days, fixed, initialStates, ctx);
   const nightCapable = members.filter((member) => member.eligibleShifts.includes(nightId)).map((member) => member.id);
   const initialQueue = deriveNightQueue(window.codesById, nightCapable, nightId);
   const initialNight = initialNightState(window.codesById, initialQueue, nightId);
@@ -356,6 +408,89 @@ export function plannedWorkers(count, search = {}, { cores = typeof os.available
 }
 
 export async function generateRoster({ config, calendars, history, onProgress }) {
+  try {
+    return await buildRoster({ config, calendars, history, onProgress });
+  } catch (error) {
+    // A month that cannot be made (not a mistake in Data Roster.xlsx): add the
+    // concrete ways out that work, each one tried first, instead of general advice.
+    if (!(error instanceof RosterError) || !error.details?.date || error.details.inputConflict || error.details.suggestions) throw error;
+    onProgress?.({ step: "suggest" });
+    const suggestions = suggestWaysOut({ config, calendars, history }, error.details.date);
+    if (suggestions.length === 0) throw error;
+    const message = error.message.split("\n").filter((line) => !/^(Saran|Pilihan):/.test(line)).join("\n");
+    throw new RosterError(
+      `${message}\nYang bisa dilakukan (sudah dicoba program; masing-masing membuat roster bisa disusun):\n${suggestions.map((text) => `- ${text}`).join("\n")}`,
+      { ...error.details, suggestions }
+    );
+  }
+}
+
+// Ways out for a month that cannot be made, each tried before it is offered:
+// without one of the leaves or requests around the date (nearest first), or with
+// one temporary helper from outside the team (the narrowest that works).
+const SUGGEST_BUDGET_MS = 3000;
+const REQUEST_WORDS = Object.freeze({ C: "cuti", T: "training/dinas", H: "permintaan libur", 1: "permintaan Shift 1", 2: "permintaan Shift 2", 3: "permintaan Shift 3", "!1": "permintaan tidak Shift 1", "!2": "permintaan tidak Shift 2", "!3": "permintaan tidak Shift 3" });
+
+// Can this configuration be made at all? The coverage proof, then a short
+// complete search. Used to test a suggestion before it is offered.
+export function canBeMade({ config, calendars, history }, { budgetMs = SUGGEST_BUDGET_MS } = {}) {
+  try {
+    const { input } = prepareMonth({ config, calendars, history });
+    return nightCoverageCheck(input).ok && exhaustiveSearch(input, { budgetMs }).status === "found";
+  } catch (error) {
+    if (error instanceof RosterError) return false;
+    throw error;
+  }
+}
+
+// One temporary helper from outside the team around `date`: the narrowest that
+// makes the month possible (nights only, day shifts only, then every shift).
+export function helperSuggestion({ config, calendars, history }, date) {
+  const { end: monthEnd } = monthBounds(Number(date.slice(0, 4)), Number(date.slice(5, 7)));
+  const nextDay = isoDate(addDays(date, 1));
+  const nights = nextDay <= monthEnd ? [date, nextDay] : [isoDate(addDays(date, -1)), date];
+  const helpers = [
+    { shifts: ["3"], from: nights[0], to: nights[1], label: "Shift 3" },
+    { shifts: ["1", "2"], from: date, to: date, label: "Shift 1 atau Shift 2" },
+    { shifts: ["1", "2", "3"], from: isoDate(addDays(date, -1)), to: nextDay, label: "semua shift" }
+  ];
+  for (const helper of helpers) {
+    const member = { id: "orang-luar-tim", name: "Orang luar tim", gender: "L", eligibleShifts: helper.shifts, activeFrom: helper.from, activeUntil: helper.to };
+    if (canBeMade({ config: { ...config, members: [...config.members, member] }, calendars, history })) {
+      return `Tambahkan 1 orang luar tim yang bisa ${helper.label} sebagai anggota sementara untuk ${formatPeriode(helper.from, helper.to)} (pilihan 1 di menu, atau isi sheet Anggota dengan Mulai Bergabung dan Terakhir Bekerja).`;
+    }
+  }
+  return null;
+}
+
+function suggestWaysOut({ config, calendars, history }, date) {
+  const works = (candidate) => canBeMade({ config: candidate, calendars, history });
+  const suggestions = [];
+  const reach = config.rules.nightBlock.max + config.rules.nightRecoveryOffDays + 1;
+  const first = isoDate(addDays(date, -reach));
+  const last = isoDate(addDays(date, 1));
+  const away = (request) => Math.abs(diffDays(request.from > date ? request.from : (request.to ?? request.from) < date ? request.to ?? request.from : date, date));
+  // Sickness cannot be moved, so it is never suggested.
+  const nearby = config.requests
+    .filter((request) => request.code !== "S" && request.from <= last && (request.to ?? request.from) >= first)
+    .sort((left, right) => away(left) - away(right))
+    .slice(0, 6);
+  const nameOf = (request) => config.members.find((member) => member.id === request.memberId)?.name ?? request.name;
+  for (let request of nearby) {
+    if (suggestions.length >= 2) break;
+    if (!works({ ...config, requests: config.requests.filter((item) => item !== request) })) continue;
+    const when = formatPeriode(request.from, request.to ?? request.from);
+    request = { ...request, name: nameOf(request) };
+    if (request.kind === "Perubahan manual (dikunci)") suggestions.push(`Jangan kunci perubahan manual ${request.name} ${when} (pilihan 3 di menu): tanpa itu roster bisa disusun.`);
+    else if (["C", "T"].includes(request.code)) suggestions.push(`Geser atau persingkat ${REQUEST_WORDS[request.code]} ${request.name} ${when}: tanpa itu roster bisa disusun.`);
+    else suggestions.push(`Batalkan atau pindahkan ${REQUEST_WORDS[request.code] ?? "permintaan"} ${request.name} ${when}: tanpa itu roster bisa disusun.`);
+  }
+  const helper = helperSuggestion({ config, calendars, history }, date);
+  if (helper) suggestions.push(helper);
+  return suggestions;
+}
+
+async function buildRoster({ config, calendars, history, onProgress }) {
   const started = Date.now();
   const { nightId, shiftIds, ctx, bounds, horizonEnd, horizonDates, days, members, window, historyCodes, fixed, initialStates, initialQueue, env, publishedDays, variants, input } = prepareMonth({ config, calendars, history });
   const workers = plannedWorkers(variants.length, config.search);

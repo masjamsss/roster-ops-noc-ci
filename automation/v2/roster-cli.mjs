@@ -113,6 +113,8 @@ function progressPrinter(label) {
       }
     } else if (step === "exhaustive") {
       console.log(`  Semua percobaan biasa buntu (bulan ini sangat ketat). Memeriksa semua kemungkinan, paling lama ${Math.round((budgetMs ?? 120000) / 60000)} menit...`);
+    } else if (step === "suggest") {
+      console.log("  Roster tidak bisa disusun. Mencari jalan keluar yang benar-benar bisa dipakai (beberapa detik)...");
     } else if (step === "improve") console.log("  Merapikan hasil...");
     else if (step === "check") console.log("  Memeriksa semua aturan...");
   };
@@ -491,7 +493,10 @@ async function runPermintaan(root, rl) {
   const impact = await cekDampakPermintaan({ root, requests: periods.map((period) => ({ memberId: who.member.id, name: who.label, ...period, code: kind.code, kind: kind.label, note })) });
   for (const item of impact) {
     if (item.ok === true) console.log(`  ✔ ${item.label}: masih bisa disusun, semua aturan bisa dipenuhi.`);
-    else if (item.ok === false) console.log(`  ✖ ${item.label}: dengan permintaan ini roster TIDAK bisa disusun. ${item.reason}`);
+    else if (item.ok === false) {
+      console.log(`  ✖ ${item.label}: dengan permintaan ini roster TIDAK bisa disusun. ${item.reason}`);
+      for (const text of item.suggestions ?? []) console.log(`     → ${text}`);
+    }
     else console.log(`  ! ${item.label}: ${item.reason}`);
   }
   if (impact.some((item) => item.ok === false)) {
