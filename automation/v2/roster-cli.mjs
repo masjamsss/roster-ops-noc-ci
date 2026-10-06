@@ -48,7 +48,8 @@ function usage() {
     "        [--tanpa-riwayat]  mulai tanpa roster bulan lalu (semua dianggap baru libur)",
     "        [--tidak-buka]     jangan buka file Excel setelah selesai",
     "        [--cepat]          satu percobaan saja (lebih cepat, untuk uji coba). Bawaan: 6 percobaan paralel,",
-    "                           dipilih yang paling sedikit temuan penting (1-3 menit; di laptop 2 inti 5-10 menit)",
+    "                           dipilih yang paling sedikit temuan penting, lalu dicari dari arah lain dan",
+    "                           diperiksa per bagian (4-8 menit; di laptop 2 inti 7-11 menit)",
     "        [--pertahankan]    perbarui roster yang sudah ada: jadwal lama dipertahankan sebisa mungkin",
     "                           (untuk cuti/sakit baru); hari sebelum hari ini tidak diubah",
     "                           (tanpa ini, --paksa menyusun ulang bebas; keduanya menandai perubahan dan tidak mengubah hari yang sudah lewat)",
@@ -96,11 +97,11 @@ function openPath(target) {
 function progressPrinter(label) {
   const tty = process.stdout.isTTY;
   let lastPercent = -1;
-  return ({ step, done, total, round, rounds, budgetMs }) => {
+  return ({ step, done, total, round, rounds, budgetMs, tried }) => {
     if (step === "perfect") {
       console.log(`  Belum sempurna, mencari lagi dengan percobaan terarah (putaran ${round} dari ${rounds})...`);
       lastPercent = -1;
-    } else if (step === "search" || step === "perfect-search") {
+    } else if (step === "search" || step === "perfect-search" || step === "diverse-search") {
       const percent = Math.round((done / total) * 100);
       if (tty) {
         const width = 30;
@@ -113,6 +114,11 @@ function progressPrinter(label) {
       }
     } else if (step === "exhaustive") {
       console.log(`  Semua percobaan biasa buntu (bulan ini sangat ketat). Memeriksa semua kemungkinan, paling lama ${Math.round((budgetMs ?? 120000) / 60000)} menit...`);
+    } else if (step === "diverse") {
+      console.log(`  Mencari yang lebih baik lagi dari arah lain (sudah ${tried} percobaan tambahan)...`);
+      lastPercent = -1;
+    } else if (step === "polish") {
+      console.log(`  Memeriksa setiap bagian roster secara lengkap (paling lama ${Math.round((budgetMs ?? 90000) / 1000)} detik)...`);
     } else if (step === "suggest") {
       console.log("  Roster tidak bisa disusun. Mencari jalan keluar yang benar-benar bisa dipakai (beberapa detik)...");
     } else if (step === "improve") console.log("  Merapikan hasil...");
@@ -166,6 +172,11 @@ function printBuat(root, done) {
       const left = [...serious.map((finding) => finding.title), ...(perfect.wlbLow ? [`${perfect.wlbLow} orang dengan skor kerja–hidup di bawah 65`] : [])];
       console.log(`   Hasil      : terbaik dari ${perfect.tried} susunan${extra}; belum sempurna karena ${left.join("; ")}. Penyebabnya dijelaskan di Ringkasan.`);
     }
+  }
+  const confidence = done.result.search?.confidence;
+  if (confidence) {
+    const complete = confidence.polish ? Object.values(confidence.polish.checked).reduce((sum, tally) => sum + tally.complete, 0) : 0;
+    console.log(`   Keyakinan  : ${confidence.attempts} susunan dicoba, ${confidence.sameBest} berakhir di hasil yang sama; peluang ada yang lebih baik sekitar 1 dari ${confidence.attempts + 1}${confidence.polish ? `; ${complete} bagian diperiksa lengkap${confidence.polish.improved ? `, ${confidence.polish.improved} perbaikan dipakai` : ", tidak ada yang lebih baik"}` : ""}`);
   }
   if (done.result.search?.exhaustive) console.log("   Pencarian  : bulan sangat ketat; susunan ditemukan dengan memeriksa semua kemungkinan (lihat catatan pertama)");
   const wellbeing = done.result.wellbeing;
@@ -247,9 +258,9 @@ const YES = ["y", "ya", "yes"];
 // Measured: 3 at a time 1-3 min (8-core Mac), one by one 5-8 min (2-core Windows).
 function timeEstimate() {
   const workers = plannedWorkers(DEFAULT_PORTFOLIO.length);
-  if (workers >= 3) return "sekitar 1-3 menit";
-  if (workers === 2) return "sekitar 3-6 menit";
-  return "di komputer ini sekitar 5-10 menit; biarkan jendela ini terbuka";
+  if (workers >= 3) return "sekitar 4-8 menit: setelah percobaan biasa, program mencari dari arah lain dan memeriksa setiap bagian roster";
+  if (workers === 2) return "sekitar 6-9 menit";
+  return "di komputer ini sekitar 7-11 menit; biarkan jendela ini terbuka";
 }
 
 // The month already exists: confirm, then ask how to rebuild it. `confirmed`:

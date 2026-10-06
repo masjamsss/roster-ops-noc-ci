@@ -206,7 +206,9 @@ test("a Friday with every female agent on leave is reported, not hidden behind '
 
 test("best-result variants run in parallel on several CPU cores with exactly the same outcome", { timeout: 600_000 }, async () => {
   const portfolio = [{}, { weightScale: { singleWorkDay: 0.6, isolatedOff: 0.67, shortWorkBlock: 0.5 } }, { search: { nightChoices: 3 } }];
-  const run = (parallel) => generateRoster({ config: makeConfig({ year: 2026, month: 10, search: { beamWidth: 800, portfolio, parallel } }), calendars: noHolidays(2026), history: septemberHistory });
+  // Diverse attempts included (fixed waves, stopped by patience, not by time); the
+  // time-limited part-by-part check is left out here so both runs are comparable.
+  const run = (parallel) => generateRoster({ config: makeConfig({ year: 2026, month: 10, search: { beamWidth: 800, portfolio, parallel, diversePatience: 3, polishMs: 0, perfectBudgetMs: 1_800_000 } }), calendars: noHolidays(2026), history: septemberHistory });
   const [sequential, parallel] = [await run(false), await run(true)];
   assert.deepEqual(parallel.search.portfolio, sequential.search.portfolio);
   assert.equal(parallel.search.chosenVariant, sequential.search.chosenVariant);
@@ -277,7 +279,7 @@ test("not perfect yet: extra attempts aimed at what is left, then an honest repo
     { memberId: "rizky", name: "Rizky", from: "2026-10-05", to: "2026-10-09", code: "S", kind: "Sakit", source: "test" },
     { memberId: "willy", name: "Willy", from: "2026-10-05", to: "2026-10-09", code: "C", kind: "Cuti", source: "test" }
   ];
-  const config = makeConfig({ year: 2026, month: 10, requests, search: { beamWidth: 600, portfolio: [{}, { search: { beamScale: 1.2 } }], perfectRounds: 1 } });
+  const config = makeConfig({ year: 2026, month: 10, requests, search: { beamWidth: 600, portfolio: [{}, { search: { beamScale: 1.2 } }], perfectRounds: 1, diverse: false, polishMs: 0 } });
   const result = await generateRoster({ config, calendars: noHolidays(2026), history: septemberHistory });
   const perfect = result.search.perfect;
   assert.equal(perfect.reached, false, "two men out the same week: 1-1-1 days cannot all be avoided");
@@ -289,6 +291,21 @@ test("not perfect yet: extra attempts aimed at what is left, then an honest repo
   assert.ok(aimed.some((entry) => entry.aim.includes("minimal")));
   const best = result.search.portfolio.filter((entry) => !entry.failed).sort((a, b) => a.serious - b.serious || a.wlbLow - b.wlbLow || a.score - b.score)[0];
   assert.equal(result.search.chosenVariant, best.variant, "the best roster over all rounds wins");
+});
+
+test("best of the best: more attempts in other directions, the winner checked part by part, and a report of how sure it is", { timeout: 900_000 }, async () => {
+  const config = makeConfig({ year: 2026, month: 10, search: { beamWidth: 600, portfolio: [{}, { search: { beamScale: 1.2 } }], perfectRounds: 0, diversePatience: 3, polishMs: 30_000 } });
+  const result = await generateRoster({ config, calendars: noHolidays(2026), history: septemberHistory });
+  const sure = result.search.confidence;
+  assert.ok(sure.diverseTried >= 3, JSON.stringify(sure));
+  assert.equal(sure.attempts, result.search.portfolio.filter((entry) => !entry.failed).length);
+  assert.ok(sure.sameBest >= 1);
+  assert.equal(sure.chanceNextBetter, 1 / (sure.attempts + 1));
+  assert.ok(sure.polish.checked["satu-orang"].parts >= 1, JSON.stringify(sure.polish));
+  const best = result.search.portfolio.filter((entry) => !entry.failed).sort((a, b) => a.serious - b.serious || a.wlbLow - b.wlbLow || a.score - b.score)[0];
+  assert.ok(result.search.finalScore <= best.score + 1, "never worse than the best attempt");
+  assert.ok(result.notes.some((note) => /^Keyakinan hasil:/.test(note)), result.notes.join("\n"));
+  assert.equal(result.audit.ok, true);
 });
 
 test("a quick single search does not claim to be perfect", { timeout: 300_000 }, async () => {

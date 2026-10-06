@@ -14,7 +14,8 @@
     "test": "node --test",
     "backtest": "node tools/backtest.mjs",
     "verify-excel": "node tools/verify-excel.mjs",
-    "paket": "node tools/paket.mjs"
+    "paket": "node tools/paket.mjs",
+    "compare-search": "node tools/compare-search.mjs"
   },
   "dependencies": {
     "exceljs": "^4.4.0"

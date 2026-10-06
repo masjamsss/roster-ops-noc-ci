@@ -40,6 +40,16 @@ function stateKey(states, night, members, shiftIds, blockCap) {
   return key;
 }
 
+// Every field of every person's state (and who holds the night, for how long):
+// two partial rosters are merged only when nothing that can matter later differs.
+// The normal key above merges near-equal states for speed; this one is used when
+// a search must be complete (refine.mjs).
+function exactStateKey(states, night) {
+  let key = `${night.owner}:${night.length}`;
+  for (const state of states) key += `|${Object.values(state).join(",")}`;
+  return key;
+}
+
 // Rest pattern of a node: who is how deep into a work streak, who is resting.
 // Keeping a variety of these stops the beam from committing everyone to the
 // same rest days (e.g. both day-only members working Mon-Fri before a weekend
@@ -131,7 +141,10 @@ export function diagnoseDeadEnd({ node, day, fixedToday, fixedTomorrow, members,
   );
 }
 
-export function runBeamSearch({ members, days, fixed, patternsPerDay, initialStates, initialNight, ctx, config, env, onProgress }) {
+// `exactKeys` merges only identical states, `maxCandidates` stops early (returns
+// { tooLarge: true }) when a day has more distinct states than that, `deadline`
+// (a Date.now() value) stops early (returns { tooLarge: true, timedOut: true }).
+export function runBeamSearch({ members, days, fixed, patternsPerDay, initialStates, initialNight, ctx, config, env, onProgress, exactKeys = false, maxCandidates = Infinity, deadline = Infinity }) {
   const count = members.length;
   const indexById = new Map(members.map((member, index) => [member.id, index]));
   const memberById = new Map(members.map((member) => [member.id, member]));
@@ -150,7 +163,10 @@ export function runBeamSearch({ members, days, fixed, patternsPerDay, initialSta
     const requested = members.map((member) => ({ requested: fixedToday[member.id] !== undefined }));
     const next = new Map();
 
+    let visited = 0;
     for (const node of beam) {
+      visited += 1;
+      if ((visited & 255) === 0 && Date.now() > deadline) return { tooLarge: true, timedOut: true, day: d, log };
       const states = { get: (id) => node.states[indexById.get(id)] };
       // Each member has only a handful of possible codes today, so compute each
       // (member, code) move once per node instead of once per pattern.
@@ -181,9 +197,10 @@ export function runBeamSearch({ members, days, fixed, patternsPerDay, initialSta
           }
           if (!valid) continue;
           score += dayScore(codes, day, nextStates, members, config, env);
-          const key = hash53(stateKey(nextStates, option.night, members, ctx.shiftIds, blockCap));
+          const key = exactKeys ? exactStateKey(nextStates, option.night) : hash53(stateKey(nextStates, option.night, members, ctx.shiftIds, blockCap));
           const existing = next.get(key);
           if (existing === undefined || score < existing.score) next.set(key, { score, states: nextStates, night: option.night, parent: node, codes });
+          if (next.size > maxCandidates) return { tooLarge: true, day: d, log };
         }
       }
     }

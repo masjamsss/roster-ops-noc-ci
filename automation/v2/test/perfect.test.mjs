@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { betterThan, isPerfect, targetedVariants } from "../src/perfect.mjs";
+import { betterThan, diverseVariants, isPerfect, targetedVariants } from "../src/perfect.mjs";
 
 const run = (overrides) => ({ serious: 0, wlbLow: 0, total: 1000, findings: [], ...overrides });
 
@@ -38,4 +38,18 @@ test("an extra round runs only if it fits the time budget (slow 2-core PCs skip 
   assert.equal(roundFits({ elapsedMs: 60_000, firstRoundMs: 60_000, firstRoundCount: 6, workers: 3, nextCount: 4, budgetMs: 360_000 }), true);
   // 2-core PC: 6 attempts one by one took 5 minutes; 4 more would end near 8 minutes.
   assert.equal(roundFits({ elapsedMs: 300_000, firstRoundMs: 300_000, firstRoundCount: 6, workers: 1, nextCount: 4, budgetMs: 360_000 }), false);
+});
+
+test("diverse attempts: other directions for the search, the same for the same month, different for another", () => {
+  const november = diverseVariants("2026-11", 0, 6);
+  assert.equal(november.length, 6);
+  assert.deepEqual(diverseVariants("2026-11", 0, 6), november, "repeatable");
+  assert.deepEqual(diverseVariants("2026-11", 3, 3), november.slice(3), "a later wave continues the same series");
+  assert.notDeepEqual(diverseVariants("2026-12", 0, 6), november);
+  for (const variant of november) {
+    assert.ok([2, 3].includes(variant.search.nightChoices));
+    assert.equal(variant.search.beamScale, undefined, "normal width: cheap, many attempts");
+    for (const factor of Object.values(variant.weightScale)) assert.ok(factor >= 0.6 && factor <= 1.8);
+  }
+  assert.ok(new Set(november.map((variant) => JSON.stringify(variant.weightScale))).size === 6, "all different");
 });

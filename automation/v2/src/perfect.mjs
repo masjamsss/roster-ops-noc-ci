@@ -52,3 +52,38 @@ export function roundFits({ elapsedMs, firstRoundMs, firstRoundCount, workers, n
   const waveMs = firstRoundMs / Math.max(1, Math.ceil(firstRoundCount / Math.max(1, workers)));
   return elapsedMs + Math.ceil(nextCount / Math.max(1, workers)) * waveMs <= budgetMs;
 }
+
+// Best of the best (user, 6 Oct). Besides the standard attempts, attempts steered in
+// random directions: some goals weighted 0.6-1.8 times while searching (rhythm,
+// fairness, hours, staffing), 2 or 3 night choices; every result is still judged
+// with the normal weights. Seeded by the month, so a month gives the same attempts
+// every time. Measured on the real November 2026: 24 such attempts found a better
+// roster than the 6 standard ones (score 20,533 vs 20,634, work-life 82 vs 80),
+// reached by 3 different attempts.
+export const DIVERSE_PATIENCE = 9;
+export const DIVERSE_WAVE = 3;
+const DIVERSE_KEYS = Object.freeze([
+  "isolatedOff", "singleWorkDay", "shortWorkBlock", "weekendSpread", "weekendSpreadDaily", "nightSpreadDaily",
+  "fullWeekendOffFirst", "weeklyHoursOver", "underWorkDaysTargetDaily", "dayShiftSwitchInBlock", "weekdayMinimal", "shift1BelowShift2"
+]);
+
+function seeded(seed) {
+  let value = seed >>> 0;
+  return () => {
+    value = (value + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(value ^ (value >>> 15), 1 | value);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export function diverseVariants(seedText, from, count) {
+  let base = 2166136261;
+  for (const char of String(seedText)) base = Math.imul(base ^ char.charCodeAt(0), 16777619) >>> 0;
+  return Array.from({ length: count }, (_, offset) => {
+    const random = seeded(base ^ Math.imul(from + offset + 1, 2654435761));
+    const weightScale = {};
+    for (const key of DIVERSE_KEYS) if (random() < 0.6) weightScale[key] = Math.round((0.6 + random() * 1.2) * 100) / 100;
+    return { weightScale, search: { nightChoices: random() < 0.5 ? 2 : 3 }, diverse: from + offset + 1 };
+  });
+}

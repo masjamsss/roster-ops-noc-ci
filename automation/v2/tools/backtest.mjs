@@ -82,6 +82,7 @@ try {
       `work-life ${result.wellbeing?.team ?? "-"} (min ${Math.min(...result.wellbeing.members.filter((item) => item.score !== null).map((item) => item.score))})`,
       result.search.perfect ? `perfect ${result.search.perfect.reached ? "YES" : "no"} (${result.search.perfect.tried} tried, ${result.search.perfect.rounds} extra rounds, winner #${result.search.chosenVariant}${result.search.portfolio[result.search.chosenVariant - 1]?.aim ? ` aimed at ${result.search.portfolio[result.search.chosenVariant - 1].aim.join("+")}` : ""})` : "perfect -",
       `score ${result.search.finalScore}`,
+      ...(result.search.confidence ? [`attempts ${result.search.confidence.attempts} (same best ${result.search.confidence.sameBest}, diverse ${result.search.confidence.diverseTried}, stop: ${result.search.confidence.stoppedBy}), polish +${result.search.confidence.polish?.improved ?? 0}`] : []),
       `${Math.round((Date.now() - started) / 1000)} s`
     ].join(" | "));
   }

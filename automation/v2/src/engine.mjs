@@ -11,7 +11,8 @@ import { formatPeriode, formatTanggal, KODE_LABEL } from "./labels-id.mjs";
 import { overtimeCover } from "./backup-plan.mjs";
 import { buildNotes, computeDayRows, computeMemberSummary, findNightBlocks } from "./metrics.mjs";
 import { explainMinimalDays } from "./minimal-days.mjs";
-import { betterThan, isPerfect, PERFECT_BUDGET_MS, roundFits, targetedVariants } from "./perfect.mjs";
+import { betterThan, DIVERSE_PATIENCE, DIVERSE_WAVE, diverseVariants, isPerfect, PERFECT_BUDGET_MS, roundFits, targetedVariants } from "./perfect.mjs";
+import { polishByCompleteParts } from "./refine.mjs";
 import { workLifeBalance } from "./wellbeing.mjs";
 import { initialNightState } from "./night-rotation.mjs";
 import { fairnessOffsets, makeEnv, scoreSchedule } from "./objective.mjs";
@@ -425,6 +426,20 @@ export async function generateRoster({ config, calendars, history, onProgress })
   }
 }
 
+// "Keyakinan hasil" in plain words, for the notes and the console.
+export function confidenceNote(confidence) {
+  const parts = [`${confidence.attempts} susunan berbeda dicoba dan ${confidence.sameBest} di antaranya berakhir di roster yang sama dengan ini`];
+  parts.push(`perkiraan peluang satu percobaan lagi menemukan yang lebih baik: sekitar 1 dari ${confidence.attempts + 1}`);
+  const polish = confidence.polish;
+  if (polish) {
+    const complete = Object.values(polish.checked).reduce((sum, tally) => sum + tally.complete, 0);
+    parts.push(polish.improved > 0
+      ? `pemeriksaan per bagian masih menemukan ${polish.improved} perbaikan (sudah dipakai); ${complete} bagian diperiksa lengkap`
+      : `${complete} bagian roster (jadwal 1 orang sebulan, 2 orang sebulan, semua orang 2–3 hari) sudah diperiksa semua kemungkinannya tanpa ada yang lebih baik`);
+  }
+  return `Keyakinan hasil: ${parts.join("; ")}.`;
+}
+
 // Ways out for a month that cannot be made, each tried before it is offered:
 // without one of the leaves or requests around the date (nearest first), or with
 // one temporary helper from outside the team (the narrowest that works).
@@ -531,6 +546,36 @@ async function buildRoster({ config, calendars, history, onProgress }) {
     if (outcome.ok && betterThan(outcome.result, chosenIndex >= 0 ? outcomes[chosenIndex].result : null)) chosenIndex = index;
   });
   choose();
+  // Best of the best (user, 6 Oct): more attempts in other directions while the
+  // time allows, until `diversePatience` attempts in a row brought nothing better.
+  const bestMode = variants.length > 1 && !lastResort;
+  const budgetMs = config.search.perfectBudgetMs ?? PERFECT_BUDGET_MS;
+  const patience = config.search.diversePatience ?? DIVERSE_PATIENCE;
+  let diverseTried = 0;
+  let sinceBetter = 0;
+  let diverseStop = null;
+  // Up to a minute of the budget is kept for the part-by-part check at the end.
+  const polishMs = config.search.polishMs ?? 90_000;
+  const polishReserve = bestMode ? Math.min(polishMs, 60_000) : 0;
+  if (bestMode && config.search.diverse !== false) {
+    while (sinceBetter < patience) {
+      // Waves of a fixed size, so every computer tries the same attempts in the same
+      // order (parallel or one by one), and only a slow one stops earlier on time.
+      const wave = diverseVariants(bounds.start.slice(0, 7), diverseTried, Math.max(1, Math.min(DIVERSE_WAVE, patience - sinceBetter)));
+      if (!roundFits({ elapsedMs: Date.now() - searchStarted, firstRoundMs, firstRoundCount: variants.length, workers: Math.min(workers, variants.length), nextCount: wave.length, budgetMs: budgetMs - polishReserve })) {
+        diverseStop = "waktu";
+        break;
+      }
+      onProgress?.({ step: "diverse", tried: diverseTried });
+      const before = chosenIndex;
+      const extra = await runAll(wave.map(({ diverse, ...variant }) => variant), "diverse-search");
+      extra.forEach((outcome, index) => outcomes.push({ ...outcome, round: "beragam", diverse: wave[index].diverse }));
+      choose();
+      diverseTried += wave.length;
+      sinceBetter = chosenIndex !== before ? 0 : sinceBetter + wave.length;
+    }
+    if (!diverseStop) diverseStop = "tidak ada yang lebih baik";
+  }
   // Not perfect yet (a serious finding, or someone's work-life score below 65):
   // extra attempts aimed at what is left, up to search.perfectRounds rounds.
   const perfectRounds = variants.length > 1 && !lastResort ? config.search.perfectRounds ?? 2 : 0;
@@ -541,7 +586,6 @@ async function buildRoster({ config, calendars, history, onProgress }) {
     if (aimed.length === 0) break;
     // Slow computers (e.g. 2 cores: attempts one by one) skip rounds that would
     // push the whole search past the time budget (6 minutes).
-    const budgetMs = config.search.perfectBudgetMs ?? PERFECT_BUDGET_MS;
     if (!roundFits({ elapsedMs: Date.now() - searchStarted, firstRoundMs, firstRoundCount: variants.length, workers: Math.min(workers, variants.length), nextCount: aimed.length, budgetMs })) {
       stoppedByTime = true;
       break;
@@ -552,11 +596,36 @@ async function buildRoster({ config, calendars, history, onProgress }) {
     extra.forEach((outcome, index) => outcomes.push({ ...outcome, round, aim: aimed[index].aim }));
     choose();
   }
+  // The winner checked part by part, every possibility (refine.mjs): a better
+  // roster is kept; otherwise it is the proof that no part can be improved.
+  let polish = null;
+  if (bestMode && polishMs > 0) {
+    const remaining = budgetMs - (Date.now() - searchStarted);
+    const polishBudget = Math.max(Math.min(20_000, polishMs), Math.min(polishMs, remaining));
+    onProgress?.({ step: "polish", budgetMs: polishBudget });
+    const winner = outcomes[chosenIndex].result;
+    const polished = polishByCompleteParts(input, winner, { budgetMs: polishBudget });
+    polish = { checked: polished.checked, improved: polished.improved, finished: polished.finished, ms: polished.ms };
+    if (polished.improved > 0) {
+      const result = finishCandidate(input, polished.codes, { searchLog: winner.searchLog, nightQueueAfterMonth: polished.nights[env.lastPublishedIndex].queue });
+      outcomes.push({ ok: true, round: "pemeriksaan", result });
+      choose();
+    }
+  }
   const portfolio = outcomes.map((outcome, index) => (outcome.ok
-    ? { variant: index + 1, round: outcome.round, ...(outcome.aim ? { aim: outcome.aim } : {}), score: Math.round(outcome.result.total), serious: outcome.result.serious, wlbLow: outcome.result.wlbLow, wlbTeam: outcome.result.wlbTeam }
+    ? { variant: index + 1, round: outcome.round, ...(outcome.aim ? { aim: outcome.aim } : {}), score: Math.round(outcome.result.total), serious: outcome.result.serious, wlbLow: outcome.result.wlbLow, wlbTeam: outcome.result.wlbTeam, total: outcome.result.total }
     : { variant: index + 1, round: outcome.round, failed: true }));
   const chosen = outcomes[chosenIndex].result;
   // Only best-result mode reviews candidates, so only it can say "perfect".
+  // How sure the result is the best: attempts, how many ended at this very roster,
+  // the chance one more independent attempt would beat it (1 in attempts + 1), and
+  // the parts checked completely.
+  const succeeded = outcomes.filter((outcome) => outcome.ok);
+  const same = (result) => result.serious === chosen.serious && (result.wlbLow ?? 0) === (chosen.wlbLow ?? 0) && Math.abs(result.total - chosen.total) < 0.5;
+  const confidence = bestMode ? {
+    attempts: succeeded.length, sameBest: succeeded.filter((outcome) => same(outcome.result)).length,
+    diverseTried, sinceBetter, stoppedBy: diverseStop, chanceNextBetter: 1 / (succeeded.length + 1), polish
+  } : null;
   const perfect = variants.length < 2 ? null : { reached: isPerfect(chosen), rounds, tried: outcomes.filter((outcome) => outcome.ok).length, remaining: (chosen.findings ?? []).filter((finding) => finding.level === "penting").map((finding) => finding.id), wlbLow: chosen.wlbLow ?? 0, stoppedByTime };
   onProgress?.({ step: "improve" });
   const codes = chosen.codes;
@@ -605,6 +674,7 @@ async function buildRoster({ config, calendars, history, onProgress }) {
     members, days, codes, historyDates: window.dates, historyCodes, initialStates, initialQueue, nightBlocks, summary, dayRows,
     config, env, requestCount, nightId, backups, backupPlan, changes, externalBackups: config.externalBackups ?? [], minimalReasons
   });
+  if (confidence) notes.push(confidenceNote(confidence));
   if (lastResort) {
     notes.unshift("Bulan ini sangat ketat: pencarian biasa tidak menemukan susunan, jadi program memeriksa semua kemungkinan dan memakai susunan yang memenuhi semua aturan (lalu dirapikan). Polanya bisa berat bagi beberapa orang; bila bisa, kurangi cuti atau permintaan yang bersamaan, atau tambahkan cadangan.");
   }
@@ -643,6 +713,7 @@ async function buildRoster({ config, calendars, history, onProgress }) {
       beamWidthMax: widths.length ? Math.max(...widths) : null,
       beamWidthMin: widths.length ? Math.min(...widths) : null,
       exhaustive: lastResort ? { found: true, ms: lastResort.ms } : null,
+      confidence,
       searchScore: Math.round(searchScore),
       finalScore: Math.round(final.total),
       localSwaps: localLog.length,

@@ -18,7 +18,7 @@ async function newRoot() {
   for (const year of [2026, 2027]) await copyFile(new URL(`ID-${year}.json`, HOLIDAYS), path.join(paths.holidaysDir, `ID-${year}.json`));
   await mkdir(path.join(paths.resultsDir, "2026-09"), { recursive: true });
   await copyFile(new URL("./fixtures/september-2026.csv", import.meta.url), path.join(paths.resultsDir, "2026-09", "roster-2026-09.csv"));
-  await writeFile(paths.advancedSettings, JSON.stringify({ search: { beamWidth: 400 } }));
+  await writeFile(paths.advancedSettings, JSON.stringify({ search: { beamWidth: 400, diversePatience: 3, polishMs: 20_000 } }));
   return { root, paths };
 }
 
@@ -118,9 +118,11 @@ test("buat roster in best-result mode tries the default variants and keeps the b
   const { root } = await newRoot();
   const done = await buatRoster({ root, monthKey: "2026-10", online: false, best: true });
   assert.equal(done.result.audit.ok, true);
-  assert.equal(done.result.search.portfolio.length, 6, "the normal search plus 5 variants");
-  const ranked = [...done.result.search.portfolio].sort((a, b) => a.serious - b.serious || a.score - b.score);
-  assert.equal(done.result.search.chosenVariant, ranked[0].variant, "fewest serious findings, then lowest score");
+  assert.ok(done.result.search.portfolio.length > 6, "the normal search plus 5 variants, then attempts in other directions");
+  assert.equal(done.result.search.portfolio.filter((entry) => entry.round === 0).length, 6);
+  const ranked = [...done.result.search.portfolio].filter((entry) => !entry.failed).sort((a, b) => a.serious - b.serious || a.wlbLow - b.wlbLow || a.total - b.total);
+  assert.equal(done.result.search.chosenVariant, ranked[0].variant, "fewest serious findings, then people below 65, then lowest score");
+  assert.ok(done.result.search.confidence.attempts > 6);
 });
 
 test("updating an existing month after sudden sickness: past days frozen, few changes, changes visible in the Excel", { timeout: 600_000 }, async () => {
