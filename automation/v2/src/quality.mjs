@@ -6,7 +6,7 @@ import { weekdayIndex } from "./date-utils.mjs";
 import { formatTanggal } from "./labels-id.mjs";
 import { countsForShift2Share, fairShift2, shift2Totals, shift2Uneven } from "./shift-share.mjs";
 
-const WORK = new Set(["1", "2", "3", "T"]);
+const WORK = new Set(["1", "2", "3", "T", "R"]);
 
 export function reviewQuality(result) {
   const { members, days, schedule } = result;
@@ -16,7 +16,8 @@ export function reviewQuality(result) {
   const tgl = (date) => formatTanggal(date, { pendek: true });
   const available = (member) => {
     const item = summaryOf(member);
-    return days.length - (item.leaveDays ?? 0) - (item.sickDays ?? 0) - (item.trainingDays ?? 0) - (item.inactiveDays ?? 0);
+    // A Shift Reguler period (R and its days off) is off the 24/7 rotation (user, 28 Oct).
+    return days.length - (item.leaveDays ?? 0) - (item.sickDays ?? 0) - (item.trainingDays ?? 0) - (item.inactiveDays ?? 0) - (item.regularDays ?? 0) - (item.offRotationDays ?? 0);
   };
   const presentMostOfMonth = (member) => available(member) >= days.length / 2;
   const findings = [];

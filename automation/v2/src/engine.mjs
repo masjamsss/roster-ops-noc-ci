@@ -3,10 +3,12 @@
 import os from "node:os";
 import { Worker } from "node:worker_threads";
 import { auditTimeline } from "./audit.mjs";
+import { CODE, isFixedWork } from "./codes.mjs";
 import { addDays, diffDays, isoDate, isWeekend, monthBounds, monthKey, parseClock, weekdayIndex } from "./date-utils.mjs";
 import { buildDays } from "./days.mjs";
+import { DEFAULT_REGULAR_WINDOW } from "./defaults.mjs";
 import { RosterError } from "./errors.mjs";
-import { deriveMemberState, deriveNightQueue, dispensationDates, rollingStats } from "./history.mjs";
+import { deriveMemberState, deriveNightQueue, dispensationDates, regularDates, rollingStats } from "./history.mjs";
 import { formatPeriode, formatTanggal, KODE_LABEL } from "./labels-id.mjs";
 import { overtimeCover } from "./backup-plan.mjs";
 import { buildNotes, computeDayRows, computeMemberSummary, findNightBlocks } from "./metrics.mjs";
@@ -63,8 +65,8 @@ function historyWindow(history, monthStart, members) {
 // How a fixed cell reads in a message: "cuti", "minta Shift 1 (Pagi)", or, in
 // update mode, "jadwal yang sudah dijalani" for days before `freezeBefore`.
 function fixedLabel(config, days, d, code) {
-  if (config.freezeBefore && days[d].date < config.freezeBefore && !["T", "C", "S"].includes(code)) return "jadwal yang sudah dijalani";
-  return ({ T: "training/dinas", C: "cuti", S: "sakit", H: "minta libur" })[code] ?? `minta ${KODE_LABEL[code] ?? code}`;
+  if (config.freezeBefore && days[d].date < config.freezeBefore && !["T", "C", "S", "R"].includes(code)) return "jadwal yang sudah dijalani";
+  return ({ T: "training/dinas", R: "Shift Reguler", C: "cuti", S: "sakit", H: "minta libur" })[code] ?? `minta ${KODE_LABEL[code] ?? code}`;
 }
 
 // Each person's own requests, leave and training (and how last month ended) must
@@ -130,7 +132,7 @@ function checkFixedStreaks(config, members, days, fixed, initialStates) {
     let first = 0;
     days.forEach((day, d) => {
       const code = fixed[d][member.id];
-      const work = code === "T" || shiftIds.has(code);
+      const work = isFixedWork(code) || shiftIds.has(code);
       if (!(work || (code === "C" && leaveAsWork))) {
         run = 0;
         return;
@@ -145,7 +147,7 @@ function checkFixedStreaks(config, members, days, fixed, initialStates) {
       throw new RosterError(
         `${member.name}: ${names.join(", ")} ${formatTanggal(days[first].date, { pendek: true })} – ${formatTanggal(day.date, { pendek: true })}` +
           `${first === 0 && initialStates[i].workStreak ? ` (sambungan ${initialStates[i].workStreak} hari kerja dari bulan lalu)` : ""} = ${run} hari kerja berturut-turut, padahal maksimal ${max} hari kerja berturut-turut ` +
-          `(training/dinas${leaveAsWork ? " dan cuti" : ""} dihitung hari kerja). Beri 1 hari libur di antaranya di sheet Cuti & Permintaan, atau ubah "Maksimal hari kerja berturut-turut" di sheet Aturan bila memang diizinkan.`,
+          `(training/dinas, Shift Reguler${leaveAsWork ? " dan cuti" : ""} dihitung hari kerja). Beri 1 hari libur di antaranya di sheet Cuti & Permintaan, atau ubah "Maksimal hari kerja berturut-turut" di sheet Aturan bila memang diizinkan.`,
         { date: day.date, inputConflict: true }
       );
     });
@@ -159,7 +161,7 @@ function checkCapacity(config, members, days, fixed) {
     return sum + config.shifts.reduce((total, shift) => total + policy.minimum[shift.id], 0);
   }, 0);
   const max = config.rules.maxConsecutiveWorkDays;
-  const available = published.reduce((sum, day) => sum + members.filter((member) => !["-", "C", "S", "T", "H"].includes(fixed[day.dayIndex][member.id])).length, 0);
+  const available = published.reduce((sum, day) => sum + members.filter((member) => !["-", "C", "S", "T", "R", "H"].includes(fixed[day.dayIndex][member.id])).length, 0);
   const capacity = Math.floor((available * max) / (max + 1));
   if (needed > capacity) {
     const perDay = config.shifts.reduce((total, shift) => total + config.coverage.weekday.minimum[shift.id], 0);
@@ -201,10 +203,27 @@ function buildDispensation(config, members, days) {
   return dispensation;
 }
 
+// Shift Reguler (user, 28 Oct): one request covers a period; it gives R on the
+// period's workdays and H on Saturday, Sunday and holidays. The person is off
+// the 24/7 rotation for those days: they fill no shift and count in no share
+// (objective.mjs, history.mjs). Leave, sickness or a shift requested for a day of
+// the period wins over it.
+function buildRegular(config, members, days, fixed) {
+  const regular = days.map(() => ({}));
+  for (const request of config.requests) {
+    if (request.code !== CODE.REGULAR) continue;
+    days.forEach((day, d) => {
+      if (day.date >= request.from && day.date <= request.to && ["R", "H"].includes(fixed[d][request.memberId])) regular[d][request.memberId] = true;
+    });
+  }
+  return regular;
+}
+
 function buildFixed(config, members, days, nightId, shiftIds) {
   const fixed = days.map(() => ({}));
   const byId = new Map(members.map((member) => [member.id, member]));
-  for (const request of config.requests) {
+  const regularLast = [...config.requests.filter((request) => request.code !== CODE.REGULAR), ...config.requests.filter((request) => request.code === CODE.REGULAR)];
+  for (const request of regularLast) {
     if (request.code.startsWith("!")) continue; // "Hindari Shift X": see buildAvoid
     const member = byId.get(request.memberId);
     const where = request.source ?? "Permintaan";
@@ -216,10 +235,12 @@ function buildFixed(config, members, days, nightId, shiftIds) {
         throw new RosterError(`${where}: ${member.name} tidak boleh ${KODE_LABEL[request.code]}.`);
       }
       const existing = fixed[d][member.id];
-      if (existing !== undefined && existing !== request.code) {
-        throw new RosterError(`${where}: bentrok dengan permintaan lain untuk ${member.name} pada ${formatTanggal(day.date)} (${KODE_LABEL[existing]} dan ${KODE_LABEL[request.code]}).`);
+      const code = request.code === CODE.REGULAR ? (day.isSpecial ? "H" : CODE.REGULAR) : request.code;
+      if (request.code === CODE.REGULAR && existing !== undefined) return;
+      if (existing !== undefined && existing !== code) {
+        throw new RosterError(`${where}: bentrok dengan permintaan lain untuk ${member.name} pada ${formatTanggal(day.date)} (${KODE_LABEL[existing]} dan ${KODE_LABEL[code]}).`);
       }
-      fixed[d][member.id] = request.code;
+      fixed[d][member.id] = code;
     });
   }
   days.forEach((day, d) => {
@@ -325,6 +346,8 @@ export function netHoursByCode(config) {
   const breakHours = config.rules.breakHours ?? 1;
   const hours = Object.fromEntries(config.shifts.map((shift) => [shift.id, Math.max(0, spanHours(shift.start, shift.end) - breakHours)]));
   hours.T = Math.max(0, spanHours(config.trainingWindow.start, config.trainingWindow.end) - breakHours);
+  const regular = config.regularWindow ?? DEFAULT_REGULAR_WINDOW;
+  hours.R = Math.max(0, spanHours(regular.start, regular.end) - breakHours);
   return hours;
 }
 
@@ -342,7 +365,7 @@ function nightFairness({ members, published, codes, history, nightId, shiftIds, 
   const earlierKeys = [...new Set(night.flatMap((member) => (earlier[member.id]?.perMonth ?? []).map((item) => item.key)))].sort();
   const current = { key, dates: published.map((day) => day.date), codesById: Object.fromEntries(members.map((member, i) => [member.id, published.map((day) => codes[i][day.dayIndex])])) };
   const months = history?.dates?.length ? [{ key: history.key, dates: history.dates, codesById: history.codesById }, current] : [current];
-  const now = rollingStats(months, night.map((member) => member.id), shiftIds, nightId, 3, { noNight: dispensationDates(requests, nightId) });
+  const now = rollingStats(months, night.map((member) => member.id), shiftIds, nightId, 3, { noNight: dispensationDates(requests, nightId), offRotation: regularDates(requests) });
   // Days the person could do nights: without leave, sickness, training and Dispensasi Shift 3.
   const pick = (item, monthKeyValue) => (item ? { key: monthKeyValue, nights: item.nightDays, longBlocks: item.longNightBlocks, availableDays: item.nightAvailableDays ?? item.availableDays } : null);
   return {
@@ -369,6 +392,7 @@ export function prepareMonth({ config, calendars, history }) {
     shiftIds,
     nightShiftId: nightId,
     trainingWindow: config.trainingWindow,
+    regularWindow: config.regularWindow ?? DEFAULT_REGULAR_WINDOW,
     rules: config.rules,
     weights: config.weights,
     nightChoices: config.search.nightChoices ?? 1,
@@ -385,6 +409,7 @@ export function prepareMonth({ config, calendars, history }) {
   const avoid = buildAvoid(config, members, days);
   ctx.avoid = avoid;
   ctx.dispensation = buildDispensation(config, members, days);
+  ctx.regular = buildRegular(config, members, days, fixed);
   checkCapacity(config, members, days, fixed);
 
   const initialStates = members.map((member, i) => ({
@@ -397,7 +422,7 @@ export function prepareMonth({ config, calendars, history }) {
   const initialQueue = deriveNightQueue(window.codesById, nightCapable, nightId);
   const initialNight = initialNightState(window.codesById, initialQueue, nightId);
   const patternsPerDay = days.map((day, d) => buildDayPatterns({ day, fixedToday: fixed[d], avoidToday: avoid[d], members, config, nightId }));
-  const env = makeEnv(config, days, members, fixed, ctx.dispensation);
+  const env = makeEnv(config, days, members, fixed, ctx.dispensation, ctx.regular);
   const rolling = fairnessOffsets(members, history?.stats);
   env.nightOffset = rolling.nights;
   env.weekendOffset = rolling.weekends;
@@ -462,7 +487,7 @@ export function confidenceNote(confidence) {
 // without one of the leaves or requests around the date (nearest first), or with
 // one temporary helper from outside the team (the narrowest that works).
 const SUGGEST_BUDGET_MS = 3000;
-const REQUEST_WORDS = Object.freeze({ C: "cuti", T: "training/dinas", H: "permintaan libur", 1: "permintaan Shift 1", 2: "permintaan Shift 2", 3: "permintaan Shift 3", "!1": "permintaan tidak Shift 1", "!2": "permintaan tidak Shift 2", "!3": "permintaan tidak Shift 3" });
+const REQUEST_WORDS = Object.freeze({ C: "cuti", T: "training/dinas", R: "Shift Reguler", H: "permintaan libur", 1: "permintaan Shift 1", 2: "permintaan Shift 2", 3: "permintaan Shift 3", "!1": "permintaan tidak Shift 1", "!2": "permintaan tidak Shift 2", "!3": "permintaan tidak Shift 3" });
 
 // Can this configuration be made at all? The coverage proof, then a short
 // complete search. Used to test a suggestion before it is offered.
@@ -515,7 +540,7 @@ function suggestWaysOut({ config, calendars, history }, date) {
     const when = formatPeriode(request.from, request.to ?? request.from);
     request = { ...request, name: nameOf(request) };
     if (request.kind === "Perubahan manual (dikunci)") suggestions.push(`Jangan kunci perubahan manual ${request.name} ${when} (pilihan 3 di menu): tanpa itu roster bisa disusun.`);
-    else if (["C", "T"].includes(request.code)) suggestions.push(`Geser atau persingkat ${REQUEST_WORDS[request.code]} ${request.name} ${when}: tanpa itu roster bisa disusun.`);
+    else if (["C", "T", "R"].includes(request.code)) suggestions.push(`Geser atau persingkat ${REQUEST_WORDS[request.code]} ${request.name} ${when}: tanpa itu roster bisa disusun.`);
     else suggestions.push(`Batalkan atau pindahkan ${REQUEST_WORDS[request.code] ?? "permintaan"} ${request.name} ${when}: tanpa itu roster bisa disusun.`);
   }
   const helper = helperSuggestion({ config, calendars, history }, date);
@@ -665,7 +690,7 @@ async function buildRoster({ config, calendars, history, onProgress }) {
   const timeline = Object.fromEntries(members.map((member, i) => [member.id, [...(historyCodes[i].length === window.dates.length ? historyCodes[i] : window.dates.map((_, k) => historyCodes[i][k - (window.dates.length - historyCodes[i].length)] ?? "-")), ...codes[i]]]));
   const audit = auditTimeline({
     dates: [...window.dates, ...horizonDates], codesById: timeline, members, shifts: config.shifts, rules: config.rules,
-    coverage: config.coverage, dayInfoByDate, requestsByDate, generatedFrom: bounds.start, publishedTo: bounds.end, trainingWindow: config.trainingWindow
+    coverage: config.coverage, dayInfoByDate, requestsByDate, generatedFrom: bounds.start, publishedTo: bounds.end, trainingWindow: config.trainingWindow, regularWindow: ctx.regularWindow
   });
   if (!audit.ok) {
     const problems = audit.checks.filter((item) => !item.ok).flatMap((item) => item.pelanggaran.map((violation) => violation.pesan));
@@ -707,11 +732,12 @@ async function buildRoster({ config, calendars, history, onProgress }) {
     members: members.map(({ id, name, gender, eligibleShifts, dayOnly, activeFrom, activeUntil, row }) => ({ id, name, gender, eligibleShifts, dayOnly, activeFrom, activeUntil, row })),
     shifts: config.shifts,
     trainingWindow: config.trainingWindow,
+    regularWindow: ctx.regularWindow,
     settings: { coverage: config.coverage, rules: config.rules, workDaysTarget: Math.round(env.target), targetMode: env.mode, targetBasis: env.basis, targetDetail: env.detail },
     schedule: toSchedule(published),
     horizonSchedule: toSchedule(days),
     history: { key: history?.key ?? null, source: history?.source ?? "none", dates: window.dates, codesById: window.codesById },
-    fairness: nightFairness({ members, published, codes, history, nightId, shiftIds, key: monthKey(config.period.year, config.period.month), requests: [...(history?.dispensations ?? []), ...config.requests] }),
+    fairness: nightFairness({ members, published, codes, history, nightId, shiftIds, key: monthKey(config.period.year, config.period.month), requests: [...(history?.exemptions ?? []), ...config.requests] }),
     wellbeing: workLifeBalance({ members, days: dayRows, schedule: toSchedule(published), memberSummary: summary, settings: { rules: config.rules }, history: { codesById: window.codesById } }),
     days: dayRows,
     memberSummary: summary,

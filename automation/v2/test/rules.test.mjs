@@ -276,3 +276,20 @@ test("a Dispensasi Shift 1 or Shift 2 day is left out of the Shift 1 / Shift 2 s
   assert.deepEqual(counts(woman, ["1", "1", "H", "H", "2", "2"]), [0, 1]);
   assert.deepEqual(run(woman, ["1", "1", "H", "H", "2", "2"]).state.s1Count, 2, "without a Dispensasi every day counts");
 });
+
+test("Shift Reguler (R, 08:00-17:00) is a work day: rest after nights, 11 h rest, 5 days in a row (user, 28 Oct)", () => {
+  const regular = { ...ctx, regularWindow: { start: "08:00", end: "17:00" } };
+  const runWith = (codes) => {
+    let state = initialMemberState(deriveMemberState(["H", "H"], regular), man);
+    for (let index = 0; index < codes.length; index += 1) {
+      const next = transitionMember(state, man, codes[index], day(index), regular, { requested: true });
+      if (!next) return index;
+      state = next.state;
+    }
+    return -1;
+  };
+  assert.equal(runWith(["3", "3", "R"]), 2, "not straight after nights");
+  assert.equal(runWith(["3", "3", "H", "H", "R"]), -1, "after the 2 days off");
+  assert.equal(runWith(["2", "R"]), -1, "Shift 2 ends 21:00, R starts 08:00: 11 h");
+  assert.equal(runWith(["R", "R", "R", "R", "R", "R"]), 5, "the 6th work day in a row");
+});

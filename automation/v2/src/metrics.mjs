@@ -36,7 +36,7 @@ function shiftStart(monthStart) {
   return date.toISOString().slice(0, 10);
 }
 
-export function computeMemberSummary({ members, days, codes, historyCodes, historyDates = [], shiftIds, nightId, env, netHours = {}, weeklyHoursLimit = 40, dailyHoursLimit = 8, dispensation = [] }) {
+export function computeMemberSummary({ members, days, codes, historyCodes, historyDates = [], shiftIds, nightId, env, netHours = {}, weeklyHoursLimit = 40, dailyHoursLimit = 8, dispensation = [], regular = [] }) {
   const summary = {};
   members.forEach((member, i) => {
     const before = (d) => (d > 0 ? codes[i][d - 1] : (historyCodes[i].at(-1) ?? "-"));
@@ -67,7 +67,10 @@ export function computeMemberSummary({ members, days, codes, historyCodes, histo
       // Days with a Dispensasi per shift, on days the person was rosterable (not C, S, T or -).
       dispensationDays: Object.fromEntries(shiftIds.map((id) => [id, 0])),
       // Shift 1 / Shift 2 for the split: without the days with Dispensasi Shift 1 or 2 (shift-share.mjs).
-      splitShifts: { 1: 0, 2: 0 }
+      splitShifts: { 1: 0, 2: 0 },
+      // Shift Reguler (user, 28 Oct): R days, and the period's days off (off the 24/7 rotation).
+      regularDays: 0,
+      offRotationDays: 0
     };
     days.forEach((day, d) => {
       if (!day.published) return;
@@ -85,7 +88,9 @@ export function computeMemberSummary({ members, days, codes, historyCodes, histo
       else if (code === "S") item.sickDays += 1;
       else if (code === "T") item.trainingDays += 1;
       else if (code === "-") item.inactiveDays += 1;
-      if (!["C", "S", "T", "-"].includes(code)) for (const id of dispensation[d]?.[member.id] ?? []) if (id in item.dispensationDays) item.dispensationDays[id] += 1;
+      if (code === "R") item.regularDays += 1;
+      else if (code === "H" && regular[d]?.[member.id]) item.offRotationDays += 1;
+      if (!["C", "S", "T", "R", "-"].includes(code) && !regular[d]?.[member.id]) for (const id of dispensation[d]?.[member.id] ?? []) if (id in item.dispensationDays) item.dispensationDays[id] += 1;
       if ((code === "1" || code === "2") && !excusedFromSplit(dispensation[d]?.[member.id])) item.splitShifts[code] += 1;
       const previous = before(d);
       if (day.isSunday && restedOff(previous) && restedOff(code)) item.fullWeekendsOff += 1;
@@ -185,6 +190,19 @@ function dispensationNotes({ members, published, config, nightId }) {
   });
 }
 
+// Shift Reguler (user, 28 Oct): who works office hours when and why, one line per request.
+function regularNotes({ members, published, config }) {
+  const inMonth = new Set(published.map((day) => day.date));
+  const hours = config.regularWindow ?? { start: "08:00", end: "17:00" };
+  return config.requests.filter((request) => request.code === "R").flatMap((request) => {
+    const member = members.find((item) => item.id === request.memberId);
+    const dates = [];
+    for (let date = request.from; date <= request.to; date = isoDate(addDays(date, 1))) if (member && inMonth.has(date) && isActive(member, date)) dates.push(date);
+    if (dates.length === 0) return [];
+    return [`Shift Reguler (${hours.start}–${hours.end}): ${member.name} tgl ${formatDaftarTanggal(dates)}${request.note ? ` (${request.note})` : ""}. Sabtu, Minggu dan tanggal merah di periode ini libur. Shift Reguler tidak dihitung mengisi Shift 1/2/3, dan periode ini tidak dihitung dalam pembagian Shift 3 dan akhir pekan, jadi ${member.name} tidak perlu menggantinya nanti.`];
+  });
+}
+
 export function buildNotes({ members, days, codes, historyDates, historyCodes, initialStates, initialQueue, nightBlocks, summary, dayRows, config, env, requestCount, nightId, backups = [], backupPlan = [], changes = [], externalBackups = [], minimalReasons = [] }) {
   const notes = [];
   const recovery = config.rules.nightRecoveryOffDays;
@@ -240,7 +258,7 @@ export function buildNotes({ members, days, codes, historyDates, historyCodes, i
     if (state.workStreak + config.rules.nightBlock.min > config.rules.maxConsecutiveWorkDays) {
       const workDates = historyDates.slice(historyDates.length - state.workStreak);
       reason = `${members[i].name} sudah bekerja ${state.workStreak} hari berturut-turut (${formatRentang(workDates)})`;
-    } else if (["C", "S", "T", "-"].includes(firstCode)) reason = `${members[i].name} sedang ${KODE_LABEL[firstCode].toLowerCase()}`;
+    } else if (["C", "S", "T", "R", "-"].includes(firstCode)) reason = `${members[i].name} sedang ${KODE_LABEL[firstCode].toLowerCase()}`;
     else if (state.lastWorkWasNight && state.restStreak < recovery) reason = `${members[i].name} masih istirahat setelah Shift 3`;
     notes.push(`Giliran Shift 3 pertama seharusnya ${members[i].name}, tetapi ${reason}; ${firstBlock.name} menggantikan (${formatPeriode(firstBlock.start, firstBlock.end)}) dan ${members[i].name} masuk giliran berikutnya.`);
   }
@@ -310,7 +328,8 @@ export function buildNotes({ members, days, codes, historyDates, historyCodes, i
   } else notes.push("Tidak ada tanggal merah atau cuti bersama di bulan ini.");
 
   const active = members.filter((member) => summary[member.id].inactiveDays === 0);
-  const workDays = active.map((member) => summary[member.id].workDays);
+  // People with Shift Reguler days are left out of the range (their own note explains them).
+  const workDays = active.filter((member) => !summary[member.id].regularDays).map((member) => summary[member.id].workDays);
   if (workDays.length > 0) {
     const range = Math.min(...workDays) === Math.max(...workDays) ? `${workDays[0]}` : `${Math.min(...workDays)}–${Math.max(...workDays)}`;
     const target = Math.round(env.target);
@@ -341,7 +360,7 @@ export function buildNotes({ members, days, codes, historyDates, historyCodes, i
     const fridays = published.filter((day) => day.isFriday);
     const missing = fridays.filter((day) => fridayWithoutFemale(members.map((_, i) => codes[i][day.dayIndex]), day, members, config));
     // Fridays where every female agent is on leave, sick or not in the team.
-    const noneAvailable = fridays.filter((day) => members.every((member, i) => member.gender !== "P" || ["C", "S", "T", "-"].includes(codes[i][day.dayIndex])));
+    const noneAvailable = fridays.filter((day) => members.every((member, i) => member.gender !== "P" || ["C", "S", "T", "R", "-"].includes(codes[i][day.dayIndex])));
     const day = (item) => formatTanggal(item.date, { pendek: true });
     if (fridays.length > 0 && missing.length === 0 && noneAvailable.length === 0) notes.push("Setiap Jumat, Shift 1 ada agen perempuan (untuk jaga saat sholat Jumat).");
     if (missing.length > 0) notes.push(`Jumat tanpa agen perempuan di Shift 1: ${missing.map(day).join(", ")}. Tidak bisa dipenuhi bersama aturan lain; bila perlu, tukar shift manual lalu jalankan menu 3 (Cek roster).`);
@@ -389,6 +408,7 @@ export function buildNotes({ members, days, codes, historyDates, historyCodes, i
   } else notes.push(`Tidak ada minggu dengan jam kerja bersih di atas ${config.rules.weeklyHoursLimit ?? 40} jam.`);
   notes.push(requestCount > 0 ? `Cuti/permintaan yang dimasukkan: ${requestCount} baris, semua dipenuhi.` : "Tidak ada cuti atau permintaan untuk bulan ini.");
   notes.push(...dispensationNotes({ members, published, config, nightId }));
+  notes.push(...regularNotes({ members, published, config }));
   return notes;
 }
 

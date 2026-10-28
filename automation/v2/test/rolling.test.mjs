@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { makeConfig } from "../src/defaults.mjs";
-import { dispensationDates, rollingStats } from "../src/history.mjs";
+import { dispensationDates, regularDates, rollingStats } from "../src/history.mjs";
 import { dayScore, fairnessOffsets } from "../src/objective.mjs";
 import { parseRosterCsv } from "../src/roster-csv.mjs";
 
@@ -112,4 +112,14 @@ test("dispensationDates: the excused days per person for one shift, from request
   ];
   assert.deepEqual(Object.fromEntries(Object.entries(dispensationDates(requests, "3")).map(([id, set]) => [id, [...set]])), { rudi: ["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-20"] });
   assert.deepEqual(dispensationDates(requests, "2"), {});
+});
+
+test("days off in a Shift Reguler period are not days available for nights or weekends (user, 28 Oct: no debt)", () => {
+  const dates = ["2026-12-04", "2026-12-05", "2026-12-06", "2026-12-07"]; // Fri, Sat, Sun, Mon
+  const month = { key: "2026-12", dates, codesById: { baru: ["R", "H", "H", "R"], ani: ["1", "H", "H", "1"] } };
+  const plain = rollingStats([month], ["baru", "ani"], ["1", "2", "3"]);
+  assert.deepEqual([plain.baru.availableDays, plain.baru.availableWeekendDays], [2, 2], "without the period, its weekend counts");
+  const stats = rollingStats([month], ["baru", "ani"], ["1", "2", "3"], "3", 3, { offRotation: regularDates([{ memberId: "baru", code: "R", from: "2026-12-04", to: "2026-12-07" }]) });
+  assert.deepEqual([stats.baru.availableDays, stats.baru.nightAvailableDays, stats.baru.availableWeekendDays], [0, 0, 0]);
+  assert.deepEqual([stats.ani.availableDays, stats.ani.availableWeekendDays], [4, 2], "others unchanged");
 });

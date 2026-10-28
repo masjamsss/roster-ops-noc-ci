@@ -2,7 +2,7 @@
 // grey cells are filled by the tool. Every read error names the sheet and row.
 import { readFile, writeFile } from "node:fs/promises";
 import ExcelJS from "exceljs";
-import { DEFAULT_COVERAGE, DEFAULT_RULES, DEFAULT_SHIFTS, DEFAULT_TEAM } from "./defaults.mjs";
+import { DEFAULT_COVERAGE, DEFAULT_REGULAR_WINDOW, DEFAULT_RULES, DEFAULT_SHIFTS, DEFAULT_TEAM } from "./defaults.mjs";
 import { RosterError } from "./errors.mjs";
 import { formatTanggal, KODE_LABEL } from "./labels-id.mjs";
 
@@ -34,7 +34,11 @@ export const REQUEST_KINDS = Object.freeze([
   // so nobody makes them up later; Hindari days are counted.
   ["Dispensasi Shift 1", "!1"],
   ["Dispensasi Shift 2", "!2"],
-  ["Dispensasi Shift 3", "!3"]
+  ["Dispensasi Shift 3", "!3"],
+  // Shift Reguler (user, 28 Oct): office hours (Aturan "Jam Shift Reguler",
+  // 08:00-17:00) on the workdays of the period, days off on Saturday, Sunday and
+  // holidays; not one of the 24/7 shifts (e.g. a new hire's onboarding).
+  ["Minta Shift Reguler", "R"]
 ]);
 export const DISPENSATION_KINDS = new Set(["Dispensasi Shift 1", "Dispensasi Shift 2", "Dispensasi Shift 3"]);
 
@@ -60,7 +64,8 @@ const RULE_ROWS = Object.freeze([
   { key: "fridayShift1Female", label: "Jumat: Shift 1 diutamakan ada agen perempuan (sholat Jumat)", kind: "yesno", optional: true, explain: "Ya = setiap Jumat minimal 1 agen perempuan di Shift 1, agar tetap ada yang jaga saat agen laki-laki sholat Jumat." },
   { key: "shift1", label: "Jam Shift 1 (Pagi)", kind: "time", explain: "Format jam mulai-selesai, contoh 07:00-16:00." },
   { key: "shift2", label: "Jam Shift 2 (Siang)", kind: "time", explain: "Format jam mulai-selesai, contoh 13:00-21:00." },
-  { key: "shift3", label: "Jam Shift 3 (Malam)", kind: "time", explain: "Format jam mulai-selesai, contoh 21:00-07:00 (selesai besok pagi)." }
+  { key: "shift3", label: "Jam Shift 3 (Malam)", kind: "time", explain: "Format jam mulai-selesai, contoh 21:00-07:00 (selesai besok pagi)." },
+  { key: "shiftR", label: "Jam Shift Reguler", kind: "time", optional: true, explain: "Jam kantor untuk \"Minta Shift Reguler\" (misalnya karyawan baru yang onboarding), contoh 08:00-17:00. Shift Reguler tidak dihitung mengisi Shift 1/2/3; Sabtu, Minggu dan tanggal merah di periodenya otomatis libur." }
 ]);
 
 const COLORS = { navy: "FF17324D", input: "FFFFF2CC", auto: "FFE7E6E6", note: "FF595959", white: "FFFFFFFF", border: "FFBFBFBF", example: "FF7F7F7F" };
@@ -168,6 +173,7 @@ export async function createInputWorkbook(file, { team = DEFAULT_TEAM, coverage 
     ["• Hindari Shift 1/2/3 = boleh masuk, tapi tidak shift itu. Permintaan pribadi (misalnya kuliah malam): bagian Shift 3 orang itu tetap dihitung, jadi diganti di hari lain.", false],
     ["• Dispensasi Shift 1/2/3 = boleh masuk, tapi tidak shift itu. Keringanan resmi untuk alasan apa pun (pemulihan medis, sertifikasi, training, kuliah); alasannya wajib diisi di Keterangan. Tidak menjadi utang: hari itu tidak dihitung dalam pembagian Shift 3 (bulan ini maupun bulan berikutnya) dan pembagian Shift 1 / Shift 2.", false],
     ["• Beberapa jenis boleh di tanggal yang sama, misalnya Dispensasi Shift 3 dan Dispensasi Shift 1 = hanya Shift 2. Untuk beberapa tanggal terpisah, isi satu baris per tanggal (atau pakai menu 8).", false],
+    ["• Minta Shift Reguler = jam kantor (kode R, jamnya di sheet Aturan, bawaan 08:00-17:00), misalnya karyawan baru yang onboarding. Cukup satu baris untuk seluruh periode: hari kerja R, Sabtu/Minggu/tanggal merah libur. R tidak dihitung mengisi Shift 1/2/3, dan periode itu tidak menjadi utang Shift 3 atau akhir pekan. Cuti atau sakit di tengah periode tetap boleh diisi.", false],
     ["", false],
     ["Cadangan dari luar tim (boleh dikosongkan)", true],
     ["• Isi sheet \"Cadangan Luar Tim\" dengan orang di luar tim yang bisa dihubungi bila ada yang sakit mendadak dan tidak ada cadangan dalam tim.", false],
@@ -183,7 +189,7 @@ export async function createInputWorkbook(file, { team = DEFAULT_TEAM, coverage 
     ["", false],
     ["Kode di roster", true],
     ...shifts.map((shift) => [`• ${shift.id} = ${shift.label} (${shift.name}) ${shift.start}–${shift.end}`, false]),
-    ["• H = Libur   • C = Cuti   • S = Sakit   • T = Training/Dinas   • - = Belum/sudah tidak aktif di tim", false],
+    ["• H = Libur   • C = Cuti   • S = Sakit   • T = Training/Dinas   • R = Shift Reguler (jam kantor)   • - = Belum/sudah tidak aktif di tim", false],
     ["", false],
     ["Bantuan", true],
     ["Lihat file PANDUAN-ADMIN.md di folder Roster untuk arti setiap pesan dan langkah bila ada masalah.", false]
@@ -351,7 +357,8 @@ function ruleValues(rules, shifts) {
     nightFreeDaysAfterShortSick: rules.nightFreeDaysAfterShortSick ?? rules.nightFreeDaysAfterSick ?? 5,
     shift1: shiftText("1"),
     shift2: shiftText("2"),
-    shift3: shiftText("3")
+    shift3: shiftText("3"),
+    shiftR: `${DEFAULT_REGULAR_WINDOW.start}-${DEFAULT_REGULAR_WINDOW.end}`
   };
 }
 
@@ -730,6 +737,7 @@ export async function readInputWorkbook(file) {
   // Aturan
   const rules = structuredClone(DEFAULT_RULES);
   const shiftTimes = Object.fromEntries(DEFAULT_SHIFTS.map((shift) => [shift.id, { start: shift.start, end: shift.end }]));
+  let regularWindow = { ...DEFAULT_REGULAR_WINDOW };
   const rulesSheet = sheetOf(INPUT_LAYOUT.rules.sheet);
   if (rulesSheet) {
     const byLabel = new Map();
@@ -773,6 +781,7 @@ export async function readInputWorkbook(file) {
     rules.nightBlock.min = Math.min(2, rules.nightBlock.preferred);
     if (rules.nightBlock.max < rules.nightBlock.preferred) problems.push('Sheet "Aturan": "Blok Shift 3 maksimal" tidak boleh lebih kecil dari blok normal.');
     for (const shiftId of ["1", "2", "3"]) if (parsed[`shift${shiftId}`]) shiftTimes[shiftId] = parsed[`shift${shiftId}`];
+    if (parsed.shiftR) regularWindow = parsed.shiftR;
   }
 
   if (problems.length > 0) {
@@ -780,5 +789,5 @@ export async function readInputWorkbook(file) {
     const more = problems.length > shown.length ? `\n- ...dan ${problems.length - shown.length} masalah lain.` : "";
     throw new RosterError(`Ada ${problems.length} masalah di Data Roster.xlsx:\n- ${shown.join("\n- ")}${more}`, { problems });
   }
-  return { members, requests, coverage, rules, shiftTimes, externalBackups, warnings: [] };
+  return { members, requests, coverage, rules, shiftTimes, regularWindow, externalBackups, warnings: [] };
 }

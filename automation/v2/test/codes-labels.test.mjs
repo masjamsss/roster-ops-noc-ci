@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CODE, isOffLike, isShiftCode, isWorkLike, normalizeCode } from "../src/codes.mjs";
-import { formatDaftarTanggal, formatTanggal, namaBulan, namaHariPendek } from "../src/labels-id.mjs";
+import { formatDaftarTanggal, formatTanggal, KODE_LABEL, namaBulan, namaHariPendek } from "../src/labels-id.mjs";
 import { addMonths, daysInMonth, monthKey, parseMonthKey } from "../src/date-utils.mjs";
 
 const SHIFTS = ["1", "2", "3"];
@@ -10,7 +10,6 @@ test("normalizeCode maps legacy and messy codes", () => {
   assert.equal(normalizeCode("T2"), "T");
   assert.equal(normalizeCode("t1"), "T");
   assert.equal(normalizeCode("OFF"), "-");
-  assert.equal(normalizeCode("R"), "H");
   assert.equal(normalizeCode(" h "), "H");
   assert.equal(normalizeCode(1), "1");
   assert.equal(normalizeCode("–"), "-");
@@ -53,4 +52,11 @@ test("formatDaftarTanggal: scattered dates in plain Indonesian, the month once",
   assert.equal(formatDaftarTanggal(["2026-11-16", "2026-11-17", "2026-11-18"]), "16–18 Nov");
   assert.equal(formatDaftarTanggal(["2026-11-30", "2026-12-01", "2026-12-05"]), "30 Nov – 1 Des dan 5 Des");
   assert.equal(formatDaftarTanggal(["2026-11-05"]), "5 Nov");
+});
+
+test("R is Shift Reguler (user, 28 Oct): a work day, not one of the 24/7 shifts", () => {
+  assert.equal(normalizeCode("r"), "R", "no longer an old spelling of H: no roster used it");
+  assert.equal(isWorkLike("R"), true);
+  assert.equal(isShiftCode("R"), false);
+  assert.equal(KODE_LABEL.R, "Shift Reguler");
 });

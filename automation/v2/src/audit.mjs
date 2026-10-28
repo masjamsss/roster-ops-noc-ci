@@ -10,8 +10,8 @@ function clockHours(text) {
   return hours + minutes / 60;
 }
 
-function windowFor(code, dayIndex, shiftById, trainingWindow) {
-  const shift = shiftById.get(code) ?? trainingWindow;
+function windowFor(code, dayIndex, shiftById, trainingWindow, regularWindow) {
+  const shift = shiftById.get(code) ?? (code === "R" ? regularWindow : trainingWindow);
   const start = dayIndex * 24 + clockHours(shift.start);
   let end = dayIndex * 24 + clockHours(shift.end);
   if (end <= start) end += 24;
@@ -22,11 +22,11 @@ function isActiveOn(member, date) {
   return (!member.activeFrom || date >= member.activeFrom) && (!member.activeUntil || date <= member.activeUntil);
 }
 
-export function auditTimeline({ dates, codesById, members, shifts, rules, coverage, dayInfoByDate, requestsByDate = {}, generatedFrom, publishedTo, trainingWindow }) {
+export function auditTimeline({ dates, codesById, members, shifts, rules, coverage, dayInfoByDate, requestsByDate = {}, generatedFrom, publishedTo, trainingWindow, regularWindow = { start: "08:00", end: "17:00" } }) {
   const shiftById = new Map(shifts.map((shift) => [shift.id, shift]));
   const nightId = shifts.find((shift) => shift.night)?.id ?? shifts.at(-1).id;
   const isShift = (code) => shiftById.has(code);
-  const isWork = (code) => isShift(code) || code === "T";
+  const isWork = (code) => isShift(code) || code === "T" || code === "R";
   const inRange = (date) => date >= generatedFrom && date <= publishedTo;
   const tgl = (date) => formatTanggal(date, { pendek: true });
   const checks = [];
@@ -103,7 +103,7 @@ export function auditTimeline({ dates, codesById, members, shifts, rules, covera
           recovery.push({ tanggal: date, anggota: name, pesan: `${name} masuk kerja tgl ${tgl(date)} setelah Shift 3 dengan libur hanya ${offAfterNight} hari (minimal ${rules.nightRecoveryOffDays}).` });
         }
         offAfterNight = null;
-        const window = windowFor(code, dayIndex, shiftById, trainingWindow);
+        const window = windowFor(code, dayIndex, shiftById, trainingWindow, regularWindow);
         if (lastEnd !== null && report && window.start - lastEnd < rules.minimumRestHours) {
           rest.push({ tanggal: date, anggota: name, pesan: `${name} hanya istirahat ${window.start - lastEnd} jam sebelum tgl ${tgl(date)} (minimal ${rules.minimumRestHours} jam).` });
         }

@@ -442,7 +442,7 @@ export async function cekRoster({ root, monthKey }) {
     const config = buildConfig({ input: await readInputWorkbook(paths.inputWorkbook), advanced: await readAdvanced(paths), monthKey: key });
     const holidays = await resolveHolidays({ years: horizonYears(key, 0), directory: paths.holidaysDir, online: false });
     const { days } = buildDays({ ...config, period: { ...config.period, lookaheadDays: 0 } }, holidays.calendars);
-    setup = { members: config.members, shifts: config.shifts, trainingWindow: config.trainingWindow, settings: { coverage: config.coverage, rules: config.rules }, days, requests: config.requests };
+    setup = { members: config.members, shifts: config.shifts, trainingWindow: config.trainingWindow, regularWindow: config.regularWindow, settings: { coverage: config.coverage, rules: config.rules }, days, requests: config.requests };
   }
   let history = { dates: [], codesById: {} };
   const notes = [...(loaded.notes ?? [])];
@@ -463,11 +463,18 @@ export async function cekRoster({ root, monthKey }) {
   for (const date of historyDates) dayInfoByDate[date] = { isSpecial: isWeekend(date), isWeekend: isWeekend(date) };
   for (const day of setup.days) dayInfoByDate[day.date] = day;
   const requestsByDate = {};
-  for (const request of setup.requests ?? []) {
+  // Shift Reguler: R on workdays, H on Saturday, Sunday and holidays; other
+  // requests on a day of the period win (as buildFixed in engine.mjs).
+  const regularLast = [...(setup.requests ?? []).filter((request) => request.code !== "R"), ...(setup.requests ?? []).filter((request) => request.code === "R")];
+  for (const request of regularLast) {
     for (const date of loaded.dates) {
       if (date < request.from || date > request.to) continue;
       const day = (requestsByDate[date] ??= {});
       const before = day[request.memberId];
+      if (request.code === "R") {
+        if (before === undefined) day[request.memberId] = dayInfoByDate[date]?.isSpecial ? "H" : "R";
+        continue;
+      }
       // Several "Hindari Shift X" requests on one day combine ("!1" + "!3" = "!13").
       day[request.memberId] = before?.startsWith("!") && request.code.startsWith("!") ? before + request.code.slice(1) : request.code;
     }
@@ -475,7 +482,8 @@ export async function cekRoster({ root, monthKey }) {
   const audit = auditTimeline({
     dates: [...historyDates, ...loaded.dates], codesById, members, shifts: setup.shifts, rules: setup.settings.rules,
     coverage: setup.settings.coverage, dayInfoByDate, requestsByDate, generatedFrom: loaded.dates[0], publishedTo: loaded.dates.at(-1),
-    trainingWindow: setup.trainingWindow ?? { start: "08:00", end: "17:00" }
+    trainingWindow: setup.trainingWindow ?? { start: "08:00", end: "17:00" },
+    regularWindow: setup.regularWindow ?? { start: "08:00", end: "17:00" }
   });
   return { key, label, file: loaded.sourceFile, source: loaded.source, ok: audit.ok, checks: audit.checks, manualChanges: loaded.manualChanges, notes };
 }

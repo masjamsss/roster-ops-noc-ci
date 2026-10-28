@@ -3,7 +3,7 @@
 // broken rest, hours above the weekly limit, days above target, and switching
 // between Shift 1 and Shift 2 inside a work block. It reports; it does not steer
 // the search. Labels are for the OM, in plain Indonesian.
-const WORK = new Set(["1", "2", "3", "T"]);
+const WORK = new Set(["1", "2", "3", "T", "R"]);
 const DAY_SHIFTS = new Set(["1", "2"]);
 
 export const WLB_POINTS = Object.freeze({

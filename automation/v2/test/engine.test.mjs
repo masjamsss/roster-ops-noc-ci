@@ -5,7 +5,7 @@ import test from "node:test";
 import { DEFAULT_PORTFOLIO, DEFAULT_RULES, DEFAULT_TEAM, makeConfig } from "../src/defaults.mjs";
 import { generateRoster, plannedWorkers } from "../src/engine.mjs";
 import { fairnessOffsets } from "../src/objective.mjs";
-import { dispensationDates, rollingStats } from "../src/history.mjs";
+import { dispensationDates, regularDates, rollingStats } from "../src/history.mjs";
 import { parseRosterCsv } from "../src/roster-csv.mjs";
 
 const september = parseRosterCsv(readFileSync(new URL("./fixtures/september-2026.csv", import.meta.url), "utf8"));
@@ -366,4 +366,38 @@ test("night workers share Shift 2 fairly, also without any history (user, 28 Oct
   const split = men.map((man) => `${man.name} ${man["1"]}/${man["2"]}`).join(", ");
   for (const man of men) assert.ok(Math.abs(man["2"] - (man["1"] + man["2"]) * share) <= 1.5, `${man.name}: ${split}`);
   assert.ok(!result.quality.findings.some((finding) => finding.id === "shift2-merata"), split);
+});
+
+test("Minta Shift Reguler (user, 28 Oct): R 08-17 on workdays, H on weekends and holidays, not counted in the shifts, no debt, team targets unchanged", { timeout: 300_000 }, async () => {
+  // Baru joins on 1 Feb 2027 and does regular office hours all month (onboarding); 17 Feb is a holiday.
+  const calendars = [{ year: 2027, status: "official-verified", days: [{ date: "2027-02-17", type: "national", name: "Contoh libur" }] }];
+  const baru = { id: "baru", name: "Baru", eligibleShifts: ["1", "2", "3"], activeFrom: "2027-02-01" };
+  const requests = [
+    { memberId: "baru", name: "Baru", from: "2027-02-01", to: "2027-02-28", code: "R", kind: "Minta Shift Reguler", note: "Onboarding", source: "test" },
+    { memberId: "baru", name: "Baru", from: "2027-02-10", to: "2027-02-10", code: "C", kind: "Cuti", source: "test" }
+  ];
+  const withBaru = await generateRoster({ config: smallConfig({ team: [...SMALL_TEAM, baru], requests }), calendars, history: emptyHistory });
+  const without = await generateRoster({ config: smallConfig(), calendars, history: emptyHistory });
+  assert.ok(withBaru.audit.ok, JSON.stringify(withBaru.audit.checks.filter((item) => !item.ok), null, 1));
+  for (const day of withBaru.days) {
+    const weekday = new Date(`${day.date}T00:00:00Z`).getUTCDay();
+    const expected = day.date === "2027-02-10" ? "C" : weekday === 0 || weekday === 6 || day.date === "2027-02-17" ? "H" : "R";
+    assert.equal(withBaru.schedule.baru[day.date], expected, day.date);
+    // Shift Reguler does not fill a shift: the counts are the other people's shifts.
+    for (const shiftId of ["1", "2", "3"]) assert.equal(day.counts[shiftId], SMALL_TEAM.filter((member) => withBaru.schedule[member.id][day.date] === shiftId).length);
+  }
+  // The others' targets are as if Baru were not in the team yet; Baru's own target is 0.
+  for (const member of SMALL_TEAM) assert.equal(withBaru.memberSummary[member.id].workTarget, without.memberSummary[member.id].workTarget, member.name);
+  assert.equal(withBaru.memberSummary.baru.workTarget, 0);
+  assert.equal(withBaru.memberSummary.baru.regularDays, 18);
+  assert.deepEqual(withBaru.memberSummary.baru.weeklyHours.map((week) => week.hours), [40, 32, 32, 40], "8 net hours per R day (the 2nd week has the leave day, the 3rd the holiday)");
+  // No debt: the period's days are not days Baru could have done nights or weekends.
+  const codesById = Object.fromEntries(withBaru.members.map((member) => [member.id, Object.values(withBaru.schedule[member.id])]));
+  const stats = rollingStats([{ key: "2027-02", dates: Object.keys(withBaru.schedule.baru), codesById }], Object.keys(codesById), ["1", "2", "3"], "3", 3, { offRotation: regularDates(withBaru.requests) });
+  assert.deepEqual([stats.baru.availableDays, stats.baru.nightAvailableDays, stats.baru.availableWeekendDays], [0, 0, 0]);
+  const offsets = fairnessOffsets(withBaru.members, stats);
+  const index = withBaru.members.findIndex((member) => member.id === "baru");
+  assert.deepEqual([offsets.nights[index], offsets.weekends[index]], [0, 0]);
+  assert.ok(withBaru.notes.some((note) => note.startsWith("Shift Reguler (08:00–17:00): Baru tgl 1–28 Feb (Onboarding).")), withBaru.notes.join("\n"));
+  assert.equal(withBaru.requests.find((request) => request.code === "R")?.memberId, "baru", "kept in the month's result, so next month's history knows");
 });

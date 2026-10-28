@@ -419,3 +419,19 @@ test("an older Data Roster.xlsx without the night workers' split row gets it add
   assert.deepEqual(await upgradeInputWorkbook(file), [NIGHT_SPLIT]);
   assert.equal((await readInputWorkbook(file)).rules.balanceNightWorkerDayShifts, true);
 });
+
+test("Minta Shift Reguler (user, 28 Oct): code R, and its hours in the Aturan sheet (08:00-17:00 by default, next to the shift hours)", async () => {
+  const file = await freshWorkbook();
+  await edit(file, (workbook) => addRequest(workbook, 0, ["Wawan", "2026-12-01", "2026-12-31", "Minta Shift Reguler", "Onboarding"]));
+  let input = await readInputWorkbook(file);
+  assert.deepEqual(input.requests.map((request) => [request.code, request.kind, request.from, request.to]), [["R", "Minta Shift Reguler", "2026-12-01", "2026-12-31"]]);
+  assert.deepEqual(input.regularWindow, { start: "08:00", end: "17:00" });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(file);
+  assert.equal(ruleRow(workbook, "Jam Shift Reguler"), ruleRow(workbook, "Jam Shift 3") + 1);
+  await edit(file, (book) => (book.getWorksheet(INPUT_LAYOUT.rules.sheet).getCell(ruleRow(book, "Jam Shift Reguler"), 2).value = "09:00-18:00"));
+  input = await readInputWorkbook(file);
+  assert.deepEqual(input.regularWindow, { start: "09:00", end: "18:00" });
+  await appendRequest(file, { name: "Agus", from: "2027-01-04", to: "2027-01-08", kind: "R" });
+  assert.equal((await readInputWorkbook(file)).requests.at(-1).kind, "Minta Shift Reguler");
+});

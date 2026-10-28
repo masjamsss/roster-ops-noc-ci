@@ -1,4 +1,5 @@
-import { isOffLike, isWorkLike } from "./codes.mjs";
+import { isFixedWork, isOffLike, isWorkLike } from "./codes.mjs";
+import { DEFAULT_REGULAR_WINDOW } from "./defaults.mjs";
 import { shiftWindow, weekdayIndex } from "./date-utils.mjs";
 import { NO_HISTORY, SHORT_SICK_MAX_DAYS } from "./history.mjs";
 import { KODE_LABEL } from "./labels-id.mjs";
@@ -36,7 +37,7 @@ export function initialMemberState(carry, member) {
 }
 
 function workWindow(code, dayIndex, ctx) {
-  return shiftWindow(ctx.shiftById.get(code) ?? ctx.trainingWindow, dayIndex);
+  return shiftWindow(ctx.shiftById.get(code) ?? (code === "R" ? ctx.regularWindow ?? DEFAULT_REGULAR_WINDOW : ctx.trainingWindow), dayIndex);
 }
 
 // First hard rule the move would break, or null. Order matters: it decides
@@ -48,7 +49,7 @@ function hardViolation(state, member, code, day, ctx, requested) {
   const night = code === ctx.nightShiftId;
   if (shift && !member.eligibleShifts.includes(code)) return { rule: "eligibility" };
   if (shift && ctx.avoid?.[day.dayIndex]?.[member.id]?.has(code)) return { rule: "avoid" };
-  if (shift || code === "T") {
+  if (shift || isFixedWork(code)) {
     const rules = ctx.rules;
     if (state.previousCode === ctx.nightShiftId && !night) return { rule: "after-night" };
     if (state.lastWorkWasNight && isOffLike(state.previousCode) && state.restStreak < rules.nightRecoveryOffDays) {
@@ -127,7 +128,7 @@ export function transitionMember(state, member, code, day, ctx, { requested = fa
   const rules = ctx.rules;
   const shift = ctx.shiftById.get(code);
   const night = code === ctx.nightShiftId;
-  const workLike = Boolean(shift) || code === "T";
+  const workLike = Boolean(shift) || isFixedWork(code);
   const previousShift = ctx.shiftById.get(state.previousCode);
   const next = { ...state, previousPreviousCode: state.previousCode, previousCode: code };
   let score = 0;
@@ -233,7 +234,9 @@ export function transitionMember(state, member, code, day, ctx, { requested = fa
   // Rosterable days exclude leave, sickness and training; those are "excused"
   // days that count 1:1 against the person's monthly workday target.
   if (day.published && (code === "C" || code === "S" || code === "T")) next.excusedCount = state.excusedCount + 1;
-  else if (day.published && code !== "-") {
+  // A Shift Reguler period (R and its days off) is off the 24/7 rotation: neither
+  // available nor excused, like a day before joining (user, 28 Oct).
+  else if (day.published && code !== "-" && code !== "R" && !ctx.regular?.[day.dayIndex]?.[member.id]) {
     next.availableDays = state.availableDays + 1;
     // Dispensasi Shift 3 (user, 28 Oct): an approved exemption, so not a day the
     // person could have done a night; the night share is measured without it.

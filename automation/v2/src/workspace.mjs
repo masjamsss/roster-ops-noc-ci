@@ -9,7 +9,7 @@ import path from "node:path";
 import { addMonths, eachDate, monthBounds, parseMonthKey } from "./date-utils.mjs";
 import { RosterError, explainFileError } from "./errors.mjs";
 import { readRosterWorkbook } from "./excel-read.mjs";
-import { dispensationDates, rollingStats } from "./history.mjs";
+import { dispensationDates, regularDates, rollingStats } from "./history.mjs";
 import { namaBulan } from "./labels-id.mjs";
 import { parseRosterCsv } from "./roster-csv.mjs";
 
@@ -152,8 +152,9 @@ export async function buildHistory(paths, key, { statsMonths = 2, requests = [] 
     if (older) months.push(older);
   }
   const memberIds = [...new Set(months.flatMap((item) => Object.keys(item.codesById)))];
-  const dispensations = [...months.flatMap((item) => item.result?.requests ?? []), ...requests].filter((request) => request.dispensation);
-  const stats = rollingStats(months.map((item) => ({ key: item.key, dates: item.dates, codesById: item.codesById })), memberIds, ["1", "2", "3"], "3", 3, { noNight: dispensationDates(dispensations, "3") });
+  // Requests that create no debt (Dispensasi, Shift Reguler), kept with each month's result.
+  const exemptions = [...months.flatMap((item) => item.result?.requests ?? []), ...requests].filter((request) => request.dispensation || request.code === "R");
+  const stats = rollingStats(months.map((item) => ({ key: item.key, dates: item.dates, codesById: item.codesById })), memberIds, ["1", "2", "3"], "3", 3, { noNight: dispensationDates(exemptions, "3"), offRotation: regularDates(exemptions) });
   return {
     key: previousKey,
     source: previous.source,
@@ -164,7 +165,7 @@ export async function buildHistory(paths, key, { statsMonths = 2, requests = [] 
     manualChanges: previous.manualChanges,
     notes: previous.notes,
     stats,
-    dispensations
+    exemptions
   };
 }
 

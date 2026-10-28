@@ -9,6 +9,10 @@ export const DEFAULT_SHIFTS = Object.freeze([
 ]);
 
 export const DEFAULT_TRAINING_WINDOW = Object.freeze({ start: "08:00", end: "17:00" });
+// Shift Reguler (user, 28 Oct): office hours by request ("Minta Shift Reguler"),
+// e.g. a new hire's onboarding. Not one of the 24/7 shifts; the Aturan row
+// "Jam Shift Reguler" changes the hours.
+export const DEFAULT_REGULAR_WINDOW = Object.freeze({ start: "08:00", end: "17:00" });
 
 // Row order matters only as a tie-break for the night rotation when there is no history.
 export const DEFAULT_TEAM = Object.freeze([
@@ -182,12 +186,13 @@ export const DEFAULT_PORTFOLIO = Object.freeze([
 // 31-day month), nights per man unchanged.
 export const LONG_BLOCK_FORCED_WEIGHT = 3000;
 
-export function makeConfig({ year, month, team = DEFAULT_TEAM, coverage = DEFAULT_COVERAGE, rules = DEFAULT_RULES, shifts = DEFAULT_SHIFTS, requests = [], weights = {}, search = {}, localSearch = {} }) {
+export function makeConfig({ year, month, team = DEFAULT_TEAM, coverage = DEFAULT_COVERAGE, rules = DEFAULT_RULES, shifts = DEFAULT_SHIFTS, requests = [], weights = {}, search = {}, localSearch = {}, regularWindow = DEFAULT_REGULAR_WINDOW }) {
   const nightId = shifts.find((shift) => shift.night)?.id;
   return {
     period: { year, month, lookaheadDays: search.lookaheadDays ?? DEFAULT_SEARCH.lookaheadDays },
     shifts: shifts.map((shift) => ({ ...shift })),
     trainingWindow: { ...DEFAULT_TRAINING_WINDOW },
+    regularWindow: { ...regularWindow },
     members: team.map((member, row) => ({
       id: member.id,
       name: member.name,

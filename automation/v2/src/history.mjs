@@ -1,5 +1,6 @@
 import { isOffLike, isShiftCode, isWorkLike } from "./codes.mjs";
 import { addDays, isoDate, isWeekend, shiftWindow } from "./date-utils.mjs";
+import { DEFAULT_REGULAR_WINDOW } from "./defaults.mjs";
 
 // Used for "long enough ago that it no longer matters" (no work / no night in the window).
 export const NO_HISTORY = 99;
@@ -32,7 +33,7 @@ function lastIndexWhere(codes, predicate) {
 function workWindow(code, dayIndex, ctx) {
   const shift = ctx.shiftById.get(code);
   if (shift) return shiftWindow(shift, dayIndex);
-  return shiftWindow(ctx.trainingWindow, dayIndex);
+  return shiftWindow(code === "R" ? ctx.regularWindow ?? DEFAULT_REGULAR_WINDOW : ctx.trainingWindow, dayIndex);
 }
 
 // State of one member at the end of the given codes (oldest first), measured
@@ -93,7 +94,9 @@ export function deriveNightQueue(codesById, nightEligibleIds, nightShiftId = "3"
 // `nightAvailableDays`: available days minus Dispensasi Shift 3 days (`noNight`,
 // a Set of dates per member, see dispensationDates), so an approved exemption
 // from nights is no debt either (user, 28 Oct). A night worked anyway counts.
-export function rollingStats(months, memberIds, shiftIds, nightShiftId = "3", longBlock = 3, { noNight = {} } = {}) {
+// `offRotation`: { memberId: Set of dates } of a Shift Reguler period; its days
+// off are not days the person could have worked nights or weekends (no debt).
+export function rollingStats(months, memberIds, shiftIds, nightShiftId = "3", longBlock = 3, { noNight = {}, offRotation = {} } = {}) {
   const fields = ["workDays", "nightDays", "weekendDays", "availableDays", "nightAvailableDays", "availableWeekendDays", "longNightBlocks"];
   const stats = Object.fromEntries(memberIds.map((id) => [id, { months: 0, ...Object.fromEntries(fields.map((field) => [field, 0])), perMonth: [] }]));
   const trailingNights = {};
@@ -111,7 +114,7 @@ export function rollingStats(months, memberIds, shiftIds, nightShiftId = "3", lo
         run = code === nightShiftId ? run + 1 : 0;
         if (run === longBlock) item.longNightBlocks += 1;
         const weekend = isWeekend(month.dates[index]);
-        if (code === "H" || isShiftCode(code, shiftIds)) {
+        if ((code === "H" && !offRotation[id]?.has(month.dates[index])) || isShiftCode(code, shiftIds)) {
           item.availableDays += 1;
           if (code === nightShiftId || !noNight[id]?.has(month.dates[index])) item.nightAvailableDays += 1;
           if (weekend) item.availableWeekendDays += 1;
@@ -129,6 +132,16 @@ export function rollingStats(months, memberIds, shiftIds, nightShiftId = "3", lo
     }
   }
   return stats;
+}
+
+// Dates of each person's Shift Reguler periods: { memberId: Set of dates }.
+export function regularDates(requests) {
+  const dates = {};
+  for (const request of requests ?? []) {
+    if (request.code !== "R") continue;
+    for (let date = request.from; date <= request.to; date = isoDate(addDays(date, 1))) (dates[request.memberId] ??= new Set()).add(date);
+  }
+  return dates;
 }
 
 // Dates of each person's Dispensasi for one shift: { memberId: Set of dates }.

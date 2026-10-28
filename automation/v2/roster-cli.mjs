@@ -60,7 +60,7 @@ function usage() {
     "  node roster-cli.mjs kesiapan                     cek apakah semua siap untuk membuat roster berikutnya",
     "  node roster-cli.mjs siapkan                      buat Data Roster.xlsx bila belum ada",
     "  node roster-cli.mjs cuti --nama Agus --dari 2026-11-16 [--sampai 2026-11-18]",
-    "        [--jenis Cuti|Sakit|Training/Dinas|\"Minta libur\"|\"Minta Shift 1\"|\"Hindari Shift 3\"|\"Dispensasi Shift 3\"] [--keterangan \"...\"]",
+    "        [--jenis Cuti|Sakit|Training/Dinas|\"Minta libur\"|\"Minta Shift 1\"|\"Hindari Shift 3\"|\"Dispensasi Shift 3\"|\"Minta Shift Reguler\"] [--keterangan \"...\"]",
     "                                                   tambah satu baris di sheet Cuti & Permintaan",
     "        atau --tanggal \"5/11/2026, 12/11/2026-14/11/2026\" untuk beberapa tanggal sekaligus (satu baris per tanggal/rentang)",
     "        Dispensasi Shift 1/2/3 = keringanan resmi tanpa utang; --keterangan (alasan) wajib",
@@ -445,7 +445,8 @@ const KIND_HINT = Object.freeze({
   // Dispensasi shares the "!" codes with Hindari, so its hints are by name.
   "Dispensasi Shift 1": "keringanan resmi: tidak Shift 1, tanpa utang di pembagian Shift 1 / Shift 2 (alasan wajib)",
   "Dispensasi Shift 2": "keringanan resmi: tidak Shift 2, tanpa utang di pembagian Shift 1 / Shift 2 (alasan wajib)",
-  "Dispensasi Shift 3": "keringanan resmi: tidak Shift 3, tanpa utang (medis, sertifikasi, training; alasan wajib)"
+  "Dispensasi Shift 3": "keringanan resmi: tidak Shift 3, tanpa utang (medis, sertifikasi, training; alasan wajib)",
+  R: "jam kantor (misalnya onboarding): hari kerja R, Sabtu/Minggu/tanggal merah libur; tidak mengisi Shift 1/2/3, tanpa utang"
 });
 
 // Menu 8: leave or a special request by question and answer (no Excel needed),
@@ -468,7 +469,7 @@ async function runPermintaan(root, rl) {
   if (!who) return null;
   const kinds = REQUEST_KINDS.map(([label, code]) => ({ label, code }));
   console.log("Jenis:");
-  kinds.forEach((kind, index) => console.log(`  ${String(index + 1).padStart(2)}. ${kind.label.padEnd(18)} ${KIND_HINT[kind.label] ?? KIND_HINT[kind.code] ?? ""}`));
+  kinds.forEach((kind, index) => console.log(`  ${String(index + 1).padStart(2)}. ${kind.label.padEnd(19)} ${KIND_HINT[kind.label] ?? KIND_HINT[kind.code] ?? ""}`));
   const kind = await pick("Ketik nomor jenis: ", kinds);
   if (!kind) return null;
   const shiftId = kind.code.replace("!", "");

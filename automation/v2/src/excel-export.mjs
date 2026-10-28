@@ -21,12 +21,13 @@ export const CODE_STYLE = Object.freeze({
   C: { fill: "FFF87171", font: "FFFFFFFF", bold: true },
   S: { fill: "FFFB923C", font: "FFFFFFFF", bold: true },
   T: { fill: "FF7E57C2", font: "FFFFFFFF", bold: true },
+  R: { fill: "FF86EFAC", font: "FF14532D", bold: true },
   "-": { fill: "FFD1D5DB", font: "FF6B7280" }
 });
 const HEADER = Object.freeze({ day: "FF244A66", weekend: "FF0F6B78", holiday: "FF8B1E1E" });
 const thin = { style: "thin", color: { argb: C.border } };
 const box = { top: thin, left: thin, bottom: thin, right: thin };
-const TOTALS = ["Hari Kerja", "Libur (H)", "Cuti / Sakit / Training", "Shift 1", "Shift 2", "Shift 3", "Kerja Sabtu / Minggu", "Kerja Tgl Merah"];
+const TOTALS = ["Hari Kerja", "Libur (H)", "Cuti / Sakit / Training / Reguler", "Shift 1", "Shift 2", "Shift 3", "Kerja Sabtu / Minggu", "Kerja Tgl Merah"];
 
 export function columnLetter(index) {
   let letters = "";
@@ -137,12 +138,13 @@ function rosterSheet(workbook, result) {
   sheet.mergeCells(2, L.totalsColumn, 2, lastColumn);
 
   // Legend
-  const legend = [...result.shifts.map((shift) => [shift.id, `${shift.name} ${shift.start}–${shift.end}`]), ["H", "Libur"], ["C", "Cuti"], ["S", "Sakit"], ["T", "Training/Dinas"], ["-", "Tidak aktif"]];
+  const regular = result.regularWindow ?? { start: "08:00", end: "17:00" };
+  const legend = [...result.shifts.map((shift) => [shift.id, `${shift.name} ${shift.start}–${shift.end}`]), ["H", "Libur"], ["C", "Cuti"], ["S", "Sakit"], ["T", "Training/Dinas"], ["R", `Reguler ${regular.start}–${regular.end}`], ["-", "Tidak aktif"]];
   setCell(sheet.getCell(L.legendRow, 2), "Keterangan:", { bold: true, align: "left", border: false });
   let legendColumn = L.firstDayColumn;
   legend.forEach(([code, label]) => {
     const style = CODE_STYLE[code];
-    const labelWidth = result.shifts.some((shift) => shift.id === code) ? 4 : code === "T" ? 3 : 2;
+    const labelWidth = result.shifts.some((shift) => shift.id === code) || code === "R" ? 4 : code === "T" ? 3 : 2;
     setCell(sheet.getCell(L.legendRow, legendColumn), code, { bold: true, color: style.font, bg: style.fill ?? C.weekend });
     sheet.mergeCells(L.legendRow, legendColumn + 1, L.legendRow, legendColumn + labelWidth);
     setCell(sheet.getCell(L.legendRow, legendColumn + 1), label, { align: "left", size: 9, border: false });
@@ -187,7 +189,7 @@ function rosterSheet(workbook, result) {
       if (change) cell.note = `Sebelumnya: ${KODE_LABEL[change.from] ?? change.from}`;
       cell.dataValidation = {
         type: "list", allowBlank: true, showErrorMessage: true, errorTitle: "Kode tidak dikenal",
-        error: "Pakai salah satu kode: 1, 2, 3, H, C, S, T, -", formulae: ['"1,2,3,H,C,S,T,-"']
+        error: "Pakai salah satu kode: 1, 2, 3, H, C, S, T, R, -", formulae: ['"1,2,3,H,C,S,T,R,-"']
       };
       cell.protection = { locked: false }; // swaps are made here
     });
@@ -198,7 +200,7 @@ function rosterSheet(workbook, result) {
     const totals = [
       [`${count("1")}+${count("2")}+${count("3")}`, summary.workDays],
       [count("H"), summary.offDays],
-      [`${count("C")}+${count("S")}+${count("T")}`, summary.leaveDays + summary.sickDays + summary.trainingDays],
+      [`${count("C")}+${count("S")}+${count("T")}+${count("R")}`, summary.leaveDays + summary.sickDays + summary.trainingDays + (summary.regularDays ?? 0)],
       [count("1"), summary.shifts["1"]],
       [count("2"), summary.shifts["2"]],
       [count("3"), summary.shifts["3"]],
@@ -295,11 +297,11 @@ function dailySheet(workbook, result, L) {
   widths.forEach((width, index) => (sheet.getColumn(index + 1).width = width));
   title(sheet, `JADWAL HARIAN — ${monthTitle(result).toUpperCase()}`, "Siapa masuk setiap hari. Diambil otomatis dari sheet Roster: bila ada tukar shift, ubah di sheet Roster dan sheet ini ikut berubah.", widths.length);
   const shiftHeaders = result.shifts.map((shift) => `${shift.label} (${shift.name})\n${shift.start}–${shift.end}`);
-  sheet.getRow(4).values = ["Tanggal", "Hari", "Keterangan", ...shiftHeaders, "Libur / Cuti / Sakit / Training"];
+  sheet.getRow(4).values = ["Tanggal", "Hari", "Keterangan", ...shiftHeaders, "Libur / Cuti / Sakit / Training / Reguler"];
   headerCells(sheet.getRow(4), [1, 2, 3, 4, 5, 6, 7]);
   sheet.getRow(4).height = 32;
   const members = result.members;
-  const OFF_LABEL = { H: "Libur", C: "Cuti", S: "Sakit", T: "Training" };
+  const OFF_LABEL = { H: "Libur", C: "Cuti", S: "Sakit", T: "Training", R: "Reguler" };
   result.days.forEach((day, index) => {
     const rowNumber = 5 + index;
     const row = sheet.getRow(rowNumber);
@@ -559,7 +561,7 @@ function summarySheet(workbook, result, L, checks) {
   row += 2;
   heading(sheet, row, "Beban kerja per orang", lastColumn);
   row += 1;
-  const workloadHeaders = ["No", "Nama", "Hari kerja", "Target hari kerja", "Cuti/ Sakit/ Training", "Libur (H)", "Istirahat wajib setelah Shift 3", "Shift 1", "Shift 2", "Shift 3", "Jam kerja bersih", "Kerja Sabtu/ Minggu", "Libur Sabtu–Minggu penuh", "Kerja tgl merah"];
+  const workloadHeaders = ["No", "Nama", "Hari kerja", "Target hari kerja", "Cuti/ Sakit/ Training/ Reguler", "Libur (H)", "Istirahat wajib setelah Shift 3", "Shift 1", "Shift 2", "Shift 3", "Jam kerja bersih", "Kerja Sabtu/ Minggu", "Libur Sabtu–Minggu penuh", "Kerja tgl merah"];
   sheet.getRow(row).values = workloadHeaders;
   headerCells(sheet.getRow(row), workloadHeaders.map((_, index) => index + 1));
   sheet.getRow(row).height = 42;
@@ -585,19 +587,22 @@ function summarySheet(workbook, result, L, checks) {
       if (hours <= 0) hours += 24;
       return Math.max(0, hours - breakHours);
     });
-    const hours = spans.reduce((sum, span, offset) => sum + span * summary.shifts[result.shifts[offset].id], 0) + summary.trainingDays * Math.max(0, 9 - breakHours);
+    const regularWindow = result.regularWindow ?? { start: "08:00", end: "17:00" };
+    const regularNet = Math.max(0, Number(regularWindow.end.slice(0, 2)) + Number(regularWindow.end.slice(3, 5)) / 60 - Number(regularWindow.start.slice(0, 2)) - Number(regularWindow.start.slice(3, 5)) / 60 - breakHours);
+    const regularCount = `SUMPRODUCT(--(Roster!${columnLetter(L.firstDayColumn)}${rosterRow}:${columnLetter(L.lastDayColumn)}${rosterRow}&""="R"))`;
+    const hours = spans.reduce((sum, span, offset) => sum + span * summary.shifts[result.shifts[offset].id], 0) + summary.trainingDays * Math.max(0, 9 - breakHours) + (summary.regularDays ?? 0) * regularNet;
     const values = [
       index + 1,
       member.name,
       { formula: ref(0), result: summary.workDays },
       summary.workTarget,
-      { formula: ref(2), result: summary.leaveDays + summary.sickDays + summary.trainingDays },
+      { formula: ref(2), result: summary.leaveDays + summary.sickDays + summary.trainingDays + (summary.regularDays ?? 0) },
       { formula: ref(1), result: summary.offDays },
       summary.nightRecoveryDays,
       { formula: ref(3), result: summary.shifts["1"] },
       { formula: ref(4), result: summary.shifts["2"] },
       { formula: ref(5), result: summary.shifts["3"] },
-      { formula: `${spans.map((span, offset) => `${ref(3 + offset)}*${span}`).join("+")}${summary.trainingDays ? `+${summary.trainingDays * Math.max(0, 9 - breakHours)}` : ""}`, result: hours },
+      { formula: `${spans.map((span, offset) => `${ref(3 + offset)}*${span}`).join("+")}${summary.trainingDays ? `+${summary.trainingDays * Math.max(0, 9 - breakHours)}` : ""}+${regularCount}*${regularNet}`, result: hours },
       { formula: ref(6), result: summary.weekendWorkDays },
       pairTerms.length ? { formula: pairTerms.join("+"), result: summary.fullWeekendsOff } : 0,
       { formula: ref(7), result: summary.holidayWorkDays }
@@ -637,7 +642,7 @@ function summarySheet(workbook, result, L, checks) {
     if (to <= from) to += 24;
     return Math.max(0, to - from - breakHours);
   };
-  const extra = [...result.shifts.map((shift) => [shift.id, netOf(shift.start, shift.end)]), ["T", result.trainingWindow ? netOf(result.trainingWindow.start, result.trainingWindow.end) : 0]]
+  const extra = [...result.shifts.map((shift) => [shift.id, netOf(shift.start, shift.end)]), ["T", result.trainingWindow ? netOf(result.trainingWindow.start, result.trainingWindow.end) : 0], ["R", result.regularWindow ? netOf(result.regularWindow.start, result.regularWindow.end) : 0]]
     .map(([code, net]) => [code, Math.max(0, net - dailyLimit)]).filter(([, hours]) => hours > 0);
   sheet.mergeCells(row, 2, row, 3);
   sheet.mergeCells(row, 6, row, 7);

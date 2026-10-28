@@ -8,7 +8,7 @@ import { dayScore } from "./objective.mjs";
 import { canTransition, explainTransition, transitionMember } from "./rules.mjs";
 
 function category(code, shiftIds) {
-  if (shiftIds.includes(code) || code === "T") return "w";
+  if (shiftIds.includes(code) || code === "T" || code === "R") return "w";
   return code === "H" ? "h" : "o";
 }
 

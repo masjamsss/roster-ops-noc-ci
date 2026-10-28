@@ -13,6 +13,7 @@ export const KODE_LABEL = Object.freeze({
   C: "Cuti",
   S: "Sakit",
   T: "Training/Dinas",
+  R: "Shift Reguler",
   "-": "Tidak aktif",
   // Special requests: the person can work that day, but not this shift.
   "!1": "Bukan Shift 1 (Pagi)",

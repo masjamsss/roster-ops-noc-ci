@@ -158,3 +158,13 @@ test("the cuti command takes several dates with --tanggal, e.g. a Dispensasi on 
   const rows = (await readInputWorkbook(paths.inputWorkbook)).requests;
   assert.deepEqual(rows.map((request) => [request.from, request.to, request.dispensation]), [["2026-10-05", "2026-10-05", true], ["2026-10-12", "2026-10-14", true]]);
 });
+
+test("menu 8: 'Minta Shift Reguler' (office hours, e.g. onboarding) is added by question and answer", { timeout: 120_000 }, async () => {
+  const { root, paths } = await newRoot();
+  // 8 = request menu · 6 = Agus · 14 = Minta Shift Reguler · dates · not weekly · note · Enter · 0 = exit
+  const out = await typeInto(root, ["8", "6", "14", "05/10/2026", "09/10/2026", "", "Onboarding", "", "0"]);
+  assert.match(out, /Minta Shift Reguler\s+jam kantor/, "listed with its hint");
+  assert.match(out, /Ditambahkan/, out);
+  const request = (await readInputWorkbook(paths.inputWorkbook)).requests.find((item) => item.name === "Agus");
+  assert.deepEqual([request.code, request.from, request.to, request.note], ["R", "2026-10-05", "2026-10-09", "Onboarding"]);
+});

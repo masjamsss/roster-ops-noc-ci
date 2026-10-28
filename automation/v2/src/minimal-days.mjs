@@ -9,7 +9,7 @@ import { daftarNama, formatRentang, formatTanggal } from "./labels-id.mjs";
 import { explainTransition, transitionMember, transitionViolation } from "./rules.mjs";
 
 const AWAY = Object.freeze({ C: "cuti", S: "sakit", T: "training/dinas" });
-const WORK = new Set(["1", "2", "3", "T"]);
+const WORK = new Set(["1", "2", "3", "T", "R"]);
 const OFF = new Set(["H", "C", "S"]);
 const MAX_DAYS = 8;
 

@@ -13,7 +13,8 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const ITEMS = ["Buat Roster.bat", "Buat Roster.command", "Uji Program.bat", "PANDUAN-ADMIN.md", "Data Roster.xlsx", "pengaturan", "automation/v2"];
-const SKIP = new Set([".DS_Store", "arsip", "log-kesalahan.txt", "uji-program.txt", ".git"]);
+// nama-ci.json is only for the public Windows-test copy (tools/ci-mirror.mjs).
+const SKIP = new Set([".DS_Store", "arsip", "log-kesalahan.txt", "uji-program.txt", ".git", "nama-ci.json"]);
 
 export async function buildPackageFolder(target) {
   const base = path.join(target, "Roster");

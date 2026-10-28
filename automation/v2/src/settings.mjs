@@ -29,7 +29,8 @@ export function buildConfig({ input, advanced = {}, monthKey }) {
     requests,
     weights: advanced.weights ?? {},
     search: advanced.search ?? {},
-    localSearch: advanced.localSearch ?? {}
+    localSearch: advanced.localSearch ?? {},
+    ...(input.regularWindow ? { regularWindow: input.regularWindow } : {})
   });
   config.warnings = warnings;
   config.externalBackups = input.externalBackups ?? [];

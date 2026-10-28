@@ -6,7 +6,7 @@ import { transitionMember } from "./rules.mjs";
 import { countsForShift2Share, fairShift2, shift2Totals } from "./shift-share.mjs";
 import { staffingPenalty } from "./staffing.mjs";
 
-const UNAVAILABLE = new Set(["-", "C", "S", "T"]);
+const UNAVAILABLE = new Set(["-", "C", "S", "T", "R"]);
 const SHIFT_IDS = ["1", "2", "3"];
 
 // Friday prayer coverage: a female agent on Shift 1, when one is available.
@@ -31,7 +31,10 @@ const EXCUSED = new Set(["C", "S", "T"]);
 // Either way, every cuti, sakit or training day lowers the target by one.
 // `dispensation[dayIndex][memberId]`: shifts excused by a Dispensasi; the
 // night-rosterable days leave out Dispensasi Shift 3 days (user, 28 Oct).
-export function makeEnv(config, days, members = [], fixed = [], dispensation = []) {
+// `regular[dayIndex][memberId]`: a Shift Reguler period, off the 24/7 rotation:
+// not counted as a day in the team (target, share of the work), like a day
+// before joining (user, 28 Oct).
+export function makeEnv(config, days, members = [], fixed = [], dispensation = [], regular = []) {
   const published = days.filter((day) => day.published);
   const publishedCount = published.length;
   const numeric = typeof config.rules.workDaysTarget === "number";
@@ -44,7 +47,7 @@ export function makeEnv(config, days, members = [], fixed = [], dispensation = [
     let noNight = 0;
     for (const day of published) {
       const code = fixed[day.dayIndex]?.[member.id];
-      if (code === "-") continue;
+      if (code === "-" || regular[day.dayIndex]?.[member.id]) continue;
       activeDays += 1;
       if (EXCUSED.has(code)) excused += 1;
       else if (code !== nightId && dispensation[day.dayIndex]?.[member.id]?.has(nightId)) noNight += 1;

@@ -254,3 +254,27 @@ test("double validation leaves Dispensasi Shift 1/2 days out of the Shift 1 / Sh
   assert.ok(result.notes.some((note) => note.startsWith("Dispensasi: Ani tidak masuk Shift 2 tgl 1–12 Des (Kuliah sore). Hari-hari itu tidak dihitung dalam pembagian Shift 1 / Shift 2,")), result.notes.join("\n"));
   assert.ok(result.notes.some((note) => note.startsWith("Dispensasi: Eko tidak masuk Shift 1 tgl 14–18 Des (Sertifikasi pagi).")), result.notes.join("\n"));
 });
+
+test("double validation knows Shift Reguler: R is a work day off the rotation, its hours and requests checked, Excel = program (user, 28 Oct)", { timeout: 300_000 }, async () => {
+  const team = [...TEAM, { id: "gita", name: "Gita", eligibleShifts: ["1", "2", "3"], activeFrom: "2026-12-01" }];
+  const requests = [{ memberId: "gita", name: "Gita", from: "2026-12-01", to: "2026-12-18", code: "R", kind: "Minta Shift Reguler", note: "Onboarding", source: "test" }];
+  const result = await generateRoster({ config: makeConfig({ year: 2026, month: 12, team, requests, search: { beamWidth: 300 } }), calendars: holidays, history: { dates: [], codesById: {} } });
+  assert.ok(result.audit.ok);
+  assert.equal(result.schedule.gita["2026-12-01"], "R");
+  assert.equal(result.schedule.gita["2026-12-05"], "H");
+  const dir = await mkdtemp(path.join(tmpdir(), "roster-regular-"));
+  const file = path.join(dir, "Roster Desember 2026.xlsx");
+  await writeRosterWorkbook(result, file, { holidayCalendars: holidays, holidayNotes: [], holidayDifferences: [], inputFile: "Data Roster.xlsx" });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(file);
+  const verdicts = [];
+  workbook.getWorksheet("Pemeriksaan").eachRow((row) => row.eachCell((cell) => { if (/Sama|Berbeda/.test(String(cell.value?.result))) verdicts.push(cell.value.result); }));
+  assert.deepEqual([...new Set(verdicts)], ["✔ Sama"]);
+  const hitungan = workbook.getWorksheet("Hitungan");
+  assert.deepEqual([hitungan.getCell(17, 1).value, hitungan.getCell(17, 2).value, hitungan.getCell(17, 3).value, hitungan.getCell(17, 5).value], ["R", 8, 17, 8], "the R hours row");
+  const roster = workbook.getWorksheet("Roster");
+  let validation = null;
+  roster.eachRow((row) => row.eachCell((cell) => { if (!validation && cell.dataValidation?.type === "list") validation = cell.dataValidation.formulae[0]; }));
+  assert.equal(validation, '"1,2,3,H,C,S,T,R,-"');
+  assert.ok(result.notes.some((note) => note.startsWith("Shift Reguler (08:00–17:00): Gita tgl 1–18 Des (Onboarding).")), result.notes.join("\n"));
+});

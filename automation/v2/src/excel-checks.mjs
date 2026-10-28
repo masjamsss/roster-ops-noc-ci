@@ -23,11 +23,11 @@ const HISTORY_DAYS = 17;
 const LOOKAHEAD_DAYS = 6;
 const FIRST = 2; // the timeline starts in column B of "Hitungan"
 const PARAM = { maxWork: 2, nightMax: 3, recovery: 4, minRest: 5, maxOff: 6, sickFree: 7, limit: 8, leaveAsWork: 9, backward: 10, friday: 11, shortSickFree: 21, nightShare: 22 };
-const SHIFT_ROW = { 1: 13, 2: 14, 3: 15, T: 16 }; // A code | B start | C end (night +24) | D level | E net hours
+const SHIFT_ROW = { 1: 13, 2: 14, 3: 15, T: 16, R: 17 }; // A code | B start | C end (night +24) | D level | E net hours
 const COVER_ROW = { weekdayMin: 18, specialExact: 19, specialMin: 20 }; // B, C, D = Shift 1, 2, 3
 const TL = { date: 23, inMonth: 24, weekend: 25, saturday: 26, friday: 27, special: 28, cover: 29, exact: 30, fridayMiss: 31 };
 const MEMBER_FIRST_ROW = 34;
-const ROWS = ["code", "work", "stretch", "streak", "nightRun", "lastNight", "rest", "offRun", "hours", "offLike", "req", "disp", "active", "sickRun", "sinceSick", "sinceLongSick",
+const ROWS = ["code", "work", "stretch", "streak", "nightRun", "lastNight", "rest", "offRun", "hours", "offLike", "req", "disp", "reg", "active", "sickRun", "sinceSick", "sinceLongSick",
   "vStreak", "vNightMax", "vRecovery", "vRest", "vBackward", "vEligible", "vOffMax", "vRequest", "vInactive", "vSick",
   "single", "isolated", "switch", "shortRecovery", "longBlock", "weeks"];
 const R = Object.fromEntries(ROWS.map((name, index) => [name, index]));
@@ -144,6 +144,8 @@ export function checkSheets(workbook, result, L, ui) {
   }
   const training = result.trainingWindow ?? { start: "08:00", end: "17:00" };
   windows.T = { start: clock(training.start), end: clock(training.end), level: 0, net: Math.max(0, clock(training.end) - clock(training.start) - breakHours) };
+  const regularHours = result.regularWindow ?? { start: "08:00", end: "17:00" };
+  windows.R = { start: clock(regularHours.start), end: clock(regularHours.end), level: 0, net: Math.max(0, clock(regularHours.end) - clock(regularHours.start) - breakHours) };
   put(12, 1, "Kode");
   ["Mulai", "Selesai", "Tingkat", "Jam bersih"].forEach((label, index) => put(12, 2 + index, label));
   for (const [code, row] of Object.entries(SHIFT_ROW)) {
@@ -207,10 +209,19 @@ export function checkSheets(workbook, result, L, ui) {
     const codes = [...past, ...result.days.map((day) => result.schedule[member.id][day.date]), ...lookDates.map((date) => result.horizonSchedule[member.id][date])];
     const requested = {};
     const excused = {};
-    for (const request of result.requests ?? []) {
-      if (request.memberId !== member.id) continue;
+    // Shift Reguler (28 Oct): R on workdays, H on Saturday, Sunday and holidays;
+    // other requests on a day of the period win (engine.mjs buildFixed).
+    const regular = {};
+    const own = (result.requests ?? []).filter((request) => request.memberId === member.id);
+    for (const request of [...own.filter((item) => item.code !== "R"), ...own.filter((item) => item.code === "R")]) {
       for (const date of result.days.map((day) => day.date)) {
         if (date < request.from || date > request.to) continue;
+        if (request.code === "R") {
+          const current = requested[date];
+          if (current === undefined || current.startsWith("!")) requested[date] = dayInfo.get(date)?.isSpecial ? "H" : "R";
+          if (["R", "H"].includes(requested[date])) regular[date] = 1;
+          continue;
+        }
         // Several "Hindari" requests on one day combine: "!1" + "!3" = "!13".
         const before = requested[date];
         requested[date] = before?.startsWith("!") && request.code.startsWith("!") ? before + request.code.slice(1) : request.code;
@@ -220,11 +231,11 @@ export function checkSheets(workbook, result, L, ui) {
     }
     const activeOn = (date) => (!member.activeFrom || date >= member.activeFrom) && (!member.activeUntil || date <= member.activeUntil);
     const g = Object.fromEntries(ROWS.map((name) => [name, new Array(T).fill(0)]));
-    const W = (code) => (["1", "2", "3", "T"].includes(code) ? 1 : 0);
+    const W = (code) => (["1", "2", "3", "T", "R"].includes(code) ? 1 : 0);
     const levelOf = (code) => (["1", "2", "3"].includes(code) ? windows[code].level : 0);
     const levelFormula = (ref) => `IFERROR(INDEX($D$13:$D$15,MATCH(${ref},$A$13:$A$15,0)),0)`;
-    const startFormula = (ref) => `INDEX($B$13:$B$16,MATCH(${ref},$A$13:$A$16,0))`;
-    const endFormula = (ref) => `INDEX($C$13:$C$16,MATCH(${ref},$A$13:$A$16,0))`;
+    const startFormula = (ref) => `INDEX($B$13:$B$17,MATCH(${ref},$A$13:$A$17,0))`;
+    const endFormula = (ref) => `INDEX($C$13:$C$17,MATCH(${ref},$A$13:$A$17,0))`;
     const rosterRow = L.firstMemberRow + m;
     // Work flags first: the single-day checks look at the next day too.
     const work = codes.map(W);
@@ -241,7 +252,7 @@ export function checkSheets(workbook, result, L, ui) {
       g.code[t] = code;
       // work, stretch, streak, night run, last work was night, rest since work, off run
       g.work[t] = W(code);
-      f(row("work"), column, `IF(OR(${c}="1",${c}="2",${c}="3",${c}="T"),1,0)`, g.work[t]);
+      f(row("work"), column, `IF(OR(${c}="1",${c}="2",${c}="3",${c}="T",${c}="R"),1,0)`, g.work[t]);
       g.stretch[t] = g.work[t] || (code === "C" && paramValues.leaveAsWork) ? 1 : 0;
       f(row("stretch"), column, `IF(OR(${at("work", t)}=1,AND(${c}="C",${p("leaveAsWork")}=1)),1,0)`, g.stretch[t]);
       g.streak[t] = g.stretch[t] ? (t > 0 ? g.streak[t - 1] : 0) + 1 : 0;
@@ -255,13 +266,16 @@ export function checkSheets(workbook, result, L, ui) {
       g.offRun[t] = code === "H" ? (t > 0 ? g.offRun[t - 1] : 0) + 1 : 0;
       f(row("offRun"), column, t > 0 ? `IF(${c}="H",${prev("offRun")}+1,0)` : `IF(${c}="H",1,0)`, g.offRun[t]);
       g.hours[t] = W(code) ? windows[code].net : 0;
-      f(row("hours"), column, `IF(${at("work", t)}=1,INDEX($E$13:$E$16,MATCH(${c},$A$13:$A$16,0)),0)`, g.hours[t]);
+      f(row("hours"), column, `IF(${at("work", t)}=1,INDEX($E$13:$E$17,MATCH(${c},$A$13:$A$17,0)),0)`, g.hours[t]);
       g.offLike[t] = ["H", "C", "S"].includes(code) ? 1 : 0;
       f(row("offLike"), column, `IF(OR(${c}="H",${c}="C",${c}="S"),1,0)`, g.offLike[t]);
       g.req[t] = inMonth(t) ? requested[date] ?? "" : "";
       put(row("req"), column, g.req[t]);
       g.disp[t] = inMonth(t) ? excused[date] ?? "" : "";
       put(row("disp"), column, g.disp[t]);
+      // 1 = a day of a Shift Reguler period (R or its day off): off the 24/7 rotation.
+      g.reg[t] = inMonth(t) && regular[date] ? 1 : 0;
+      put(row("reg"), column, g.reg[t]);
       g.active[t] = activeOn(date) ? 1 : 0;
       put(row("active"), column, g.active[t]);
       // sickness: days in a row, days since the last sick day, days since the last
@@ -438,13 +452,16 @@ export function checksSheet(workbook, result, L, ui, calc) {
     const month = grid.codes.slice(H, H + M);
     const codeRange = `Hitungan!${monthRange(grid.row("code")).replaceAll("$", "")}`;
     const count = (code) => month.filter((item) => item === code).length;
-    const available = M - count("C") - count("S") - count("T") - count("-");
-    const availableF = `(${M}-COUNTIF(${codeRange},"C")-COUNTIF(${codeRange},"S")-COUNTIF(${codeRange},"T")-COUNTIF(${codeRange},"-"))`;
+    // Days in the 24/7 rotation: without leave, sickness, training, Shift Reguler and its days off (quality.mjs).
+    const regRange = `Hitungan!${monthRange(grid.row("reg")).replaceAll("$", "")}`;
+    const offRotation = month.filter((code, i) => code === "H" && grid.g.reg[H + i] === 1).length;
+    const available = M - count("C") - count("S") - count("T") - count("R") - count("-") - offRotation;
+    const availableF = `(${M}-COUNTIF(${codeRange},"C")-COUNTIF(${codeRange},"S")-COUNTIF(${codeRange},"T")-COUNTIF(${codeRange},"R")-COUNTIF(${codeRange},"-")-SUMPRODUCT((${regRange}=1)*(${codeRange}="H")))`;
     // Days available for nights: without Dispensasi Shift 3 days (as quality.mjs).
     const dispRange = `Hitungan!${monthRange(grid.row("disp")).replaceAll("$", "")}`;
-    const noNight = month.filter((code, i) => grid.g.disp[H + i].includes(nightId) && !["C", "S", "T", "-"].includes(code)).length;
+    const noNight = month.filter((code, i) => grid.g.disp[H + i].includes(nightId) && !["C", "S", "T", "R", "-"].includes(code) && grid.g.reg[H + i] !== 1).length;
     const nightAvailable = available - noNight;
-    const nightAvailableF = `(${availableF}-SUMPRODUCT(ISNUMBER(FIND("${nightId}",${dispRange}))*(${codeRange}<>"C")*(${codeRange}<>"S")*(${codeRange}<>"T")*(${codeRange}<>"-")))`;
+    const nightAvailableF = `(${availableF}-SUMPRODUCT(ISNUMBER(FIND("${nightId}",${dispRange}))*(${codeRange}<>"C")*(${codeRange}<>"S")*(${codeRange}<>"T")*(${codeRange}<>"R")*(${codeRange}<>"-")*(${regRange}<>1)))`;
     const nights = count("3");
     const workDays = count("1") + count("2") + count("3");
     // Shift 1 / Shift 2 for the split: without days with Dispensasi Shift 1 or 2 (shift-share.mjs).
