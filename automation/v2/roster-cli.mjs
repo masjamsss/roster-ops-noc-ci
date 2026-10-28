@@ -7,14 +7,14 @@ import process from "node:process";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { buatRoster, cekDampakPermintaan, cekRoster, nextMonthKey, perbaruiHariLibur, periksaSistem, previewRoster, siapkanData } from "./src/app.mjs";
-import { appendMember, appendRequest, readInputWorkbook, REQUEST_KINDS } from "./src/input-workbook.mjs";
+import { appendMember, appendRequest, DISPENSATION_KINDS, readInputWorkbook, REQUEST_KINDS } from "./src/input-workbook.mjs";
 import { DEFAULT_PORTFOLIO } from "./src/defaults.mjs";
 import { plannedWorkers } from "./src/engine.mjs";
 import { addDays, isoDate, monthBounds, parseMonthKey } from "./src/date-utils.mjs";
-import { parseTanggal } from "./src/console-input.mjs";
+import { parseDaftarTanggal, parseTanggal } from "./src/console-input.mjs";
 import { needsPlainText, plainText } from "./src/console-text.mjs";
 import { RosterError, explainFileError } from "./src/errors.mjs";
-import { formatTanggal, KODE_LABEL } from "./src/labels-id.mjs";
+import { formatDaftarTanggal, formatTanggal, KODE_LABEL } from "./src/labels-id.mjs";
 import { loadMonthCodes, monthLabel, workspacePaths } from "./src/workspace.mjs";
 
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -59,12 +59,22 @@ function usage() {
     "  node roster-cli.mjs libur [--tahun 2027]         perbarui dan tampilkan data hari libur",
     "  node roster-cli.mjs kesiapan                     cek apakah semua siap untuk membuat roster berikutnya",
     "  node roster-cli.mjs siapkan                      buat Data Roster.xlsx bila belum ada",
-    "  node roster-cli.mjs cuti --nama Addin --dari 2026-11-16 [--sampai 2026-11-18]",
-    "        [--jenis Cuti|Sakit|Training/Dinas|\"Minta libur\"|\"Minta Shift 1\"|\"Hindari Shift 3\"] [--keterangan \"...\"]",
+    "  node roster-cli.mjs cuti --nama Agus --dari 2026-11-16 [--sampai 2026-11-18]",
+    "        [--jenis Cuti|Sakit|Training/Dinas|\"Minta libur\"|\"Minta Shift 1\"|\"Hindari Shift 3\"|\"Dispensasi Shift 3\"] [--keterangan \"...\"]",
     "                                                   tambah satu baris di sheet Cuti & Permintaan",
+    "        atau --tanggal \"5/11/2026, 12/11/2026-14/11/2026\" untuk beberapa tanggal sekaligus (satu baris per tanggal/rentang)",
+    "        Dispensasi Shift 1/2/3 = keringanan resmi tanpa utang; --keterangan (alasan) wajib",
     "",
     "Pilihan umum: --folder <folder Roster> (bawaan: folder di atas automation/v2)"
   ].join("\n");
+}
+
+// "Today" for the whole run. ROSTER_HARI_INI=2026-10-15 pins it, so the tests
+// (and a trial run) behave the same whatever the real date is: a rebuild
+// freezes the days before today, and a month that is fully past is refused.
+function hariIni() {
+  const pinned = process.env.ROSTER_HARI_INI;
+  return /^\d{4}-\d{2}-\d{2}$/.test(pinned ?? "") ? new Date(`${pinned}T08:00:00`) : new Date();
 }
 
 function parseArgs(argv) {
@@ -236,7 +246,7 @@ async function ask(rl, question) {
 // admin confirms, edits Data Roster.xlsx (then sees the review again) or cancels.
 async function reviewBeforeBuilding(root, key, options, rl) {
   for (;;) {
-    const preview = await previewRoster({ root, monthKey: key, online: !options.offline });
+    const preview = await previewRoster({ root, monthKey: key, online: !options.offline, now: hariIni() });
     console.log(`\n${preview.lines.join("\n")}`);
     if (!rl) return true;
     const answer = await ask(rl, "\nLanjut membuat roster? Ketik y = lanjut, u = ubah Data Roster.xlsx, t = batal: ");
@@ -292,7 +302,7 @@ async function confirmRebuild(error, rl, confirmed) {
 }
 
 async function runBuat(root, options, rl, { confirmed = false } = {}) {
-  const key = options.bulan ?? (await nextMonthKey({ root }));
+  const key = options.bulan ?? (await nextMonthKey({ root, today: hariIni() }));
   parseMonthKey(key);
   if (!(await reviewBeforeBuilding(root, key, options, rl))) {
     console.log("Dibatalkan. Tidak ada yang diubah.");
@@ -306,7 +316,7 @@ async function runBuat(root, options, rl, { confirmed = false } = {}) {
   let done;
   for (;;) {
     try {
-      done = await buatRoster({ ...base, keep, lockManual, force, onProgress: progressPrinter(monthLabel(key)) });
+      done = await buatRoster({ ...base, keep, lockManual, force, onProgress: progressPrinter(monthLabel(key)), now: hariIni() });
       break;
     } catch (error) {
       if (!(error instanceof RosterError)) throw error;
@@ -431,7 +441,11 @@ const KIND_HINT = Object.freeze({
   3: "harus masuk Shift 3 (malam)",
   "!1": "boleh masuk, tapi jangan Shift 1 (misalnya ada urusan pagi)",
   "!2": "boleh masuk, tapi jangan Shift 2",
-  "!3": "boleh masuk, tapi jangan Shift 3 (misalnya kuliah malam)"
+  "!3": "boleh masuk, tapi jangan Shift 3 (misalnya kuliah malam)",
+  // Dispensasi shares the "!" codes with Hindari, so its hints are by name.
+  "Dispensasi Shift 1": "keringanan resmi: tidak Shift 1, tanpa utang di pembagian Shift 1 / Shift 2 (alasan wajib)",
+  "Dispensasi Shift 2": "keringanan resmi: tidak Shift 2, tanpa utang di pembagian Shift 1 / Shift 2 (alasan wajib)",
+  "Dispensasi Shift 3": "keringanan resmi: tidak Shift 3, tanpa utang (medis, sertifikasi, training; alasan wajib)"
 });
 
 // Menu 8: leave or a special request by question and answer (no Excel needed),
@@ -454,7 +468,7 @@ async function runPermintaan(root, rl) {
   if (!who) return null;
   const kinds = REQUEST_KINDS.map(([label, code]) => ({ label, code }));
   console.log("Jenis:");
-  kinds.forEach((kind, index) => console.log(`  ${String(index + 1).padStart(2)}. ${kind.label.padEnd(16)} ${KIND_HINT[kind.code] ?? ""}`));
+  kinds.forEach((kind, index) => console.log(`  ${String(index + 1).padStart(2)}. ${kind.label.padEnd(18)} ${KIND_HINT[kind.label] ?? KIND_HINT[kind.code] ?? ""}`));
   const kind = await pick("Ketik nomor jenis: ", kinds);
   if (!kind) return null;
   const shiftId = kind.code.replace("!", "");
@@ -466,7 +480,7 @@ async function runPermintaan(root, rl) {
   }
   // Dates as typed (16/11/2026, 16-11-2026, 2026-11-16 or 16/11 for this year,
   // or next year when that date is already more than two months ago).
-  const today = new Date();
+  const today = hariIni();
   const todayIso = isoDate(new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())));
   const readDate = async (question, fallback) => {
     const text = ((await rl.question(question)) ?? "").trim();
@@ -476,32 +490,53 @@ async function runPermintaan(root, rl) {
     if (!date) console.log(`Tanggal "${text}" tidak dikenal. Contoh: 16/11/2026 atau 2026-11-16.`);
     return date;
   };
-  const from = await readDate("Dari tanggal? Contoh 16/11/2026: ", null);
-  if (!from) return null;
-  const to = await readDate(`Sampai tanggal? (Enter = ${formatTanggal(from, { pendek: true })} saja): `, from);
-  if (!to) return null;
-  if (to < from) {
-    console.log("Tanggal akhir sebelum tanggal awal. Tidak ada yang diubah.");
+  // One date (then the end date and a weekly repeat are asked), or several
+  // separate dates in one answer (exam days of a certification): "5/11, 12/11-14/11, 20/11".
+  const firstText = ((await rl.question("Dari tanggal? Contoh 16/11/2026, atau beberapa tanggal sekaligus: 5/11, 12/11-14/11, 20/11: ")) ?? "").trim();
+  if (!firstText) return null;
+  const typed = parseDaftarTanggal(firstText, { year: today.getFullYear(), today: todayIso });
+  if (!typed.periods) {
+    console.log(`Tanggal "${typed.invalid}" tidak dikenal. Contoh: 16/11/2026, atau 5/11, 12/11-14/11, 20/11.`);
     return null;
   }
-  // Weekly (an evening class every Tuesday): one row per week up to the last date.
-  const until = await readDate("Berulang setiap minggu? Ketik tanggal terakhir (contoh 29/12/2026), atau Enter saja bila tidak: ", "");
-  if (until === null) return null;
-  if (until && until < from) {
-    console.log("Tanggal terakhir pengulangan sebelum tanggal mulai. Tidak ada yang diubah.");
-    return null;
+  const list = /[,;]/.test(firstText) || typed.periods[0].from !== typed.periods[0].to;
+  let periods = typed.periods;
+  let weekly = false;
+  if (!list) {
+    const from = periods[0].from;
+    const to = await readDate(`Sampai tanggal? (Enter = ${formatTanggal(from, { pendek: true })} saja): `, from);
+    if (!to) return null;
+    if (to < from) {
+      console.log("Tanggal akhir sebelum tanggal awal. Tidak ada yang diubah.");
+      return null;
+    }
+    // Weekly (an evening class every Tuesday): one row per week up to the last date.
+    const until = await readDate("Berulang setiap minggu? Ketik tanggal terakhir (contoh 29/12/2026), atau Enter saja bila tidak: ", "");
+    if (until === null) return null;
+    if (until && until < from) {
+      console.log("Tanggal terakhir pengulangan sebelum tanggal mulai. Tidak ada yang diubah.");
+      return null;
+    }
+    const length = Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000);
+    periods = [];
+    for (let start = from; start <= (until || from); start = isoDate(addDays(start, 7))) periods.push({ from: start, to: isoDate(addDays(start, length)) });
+    weekly = periods.length > 1;
   }
-  const length = Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000);
-  const periods = [];
-  for (let start = from; start <= (until || from); start = isoDate(addDays(start, 7))) periods.push({ from: start, to: isoDate(addDays(start, length)) });
   if (periods.length > 60) {
-    console.log("Terlalu banyak minggu (lebih dari 60). Isi tanggal terakhir yang lebih dekat. Tidak ada yang diubah.");
+    console.log("Terlalu banyak baris (lebih dari 60). Isi tanggal terakhir yang lebih dekat. Tidak ada yang diubah.");
     return null;
   }
-  const note = ((await rl.question("Keterangan (boleh kosong): ")) ?? "").trim();
+  // A Dispensasi is an approved exemption: its reason is required (it goes to the OM's notes).
+  const dispensation = DISPENSATION_KINDS.has(kind.label);
+  let note = ((await rl.question(dispensation ? "Alasan dispensasi (wajib, misalnya Program pemulihan medis atau Sertifikasi CCNA): " : "Keterangan (boleh kosong): ")) ?? "").trim();
+  if (dispensation && !note) note = ((await rl.question("Dispensasi perlu alasan. Ketik alasannya, atau Enter untuk batal: ")) ?? "").trim();
+  if (dispensation && !note) {
+    console.log("Dispensasi perlu alasan, jadi tidak disimpan. Tidak ada yang diubah.");
+    return null;
+  }
   // Before saving: can the month(s) still be made with this? (seconds, not minutes)
   console.log("Mengecek apakah roster masih bisa disusun dengan permintaan ini...");
-  const impact = await cekDampakPermintaan({ root, requests: periods.map((period) => ({ memberId: who.member.id, name: who.label, ...period, code: kind.code, kind: kind.label, note })) });
+  const impact = await cekDampakPermintaan({ root, now: hariIni(), requests: periods.map((period) => ({ memberId: who.member.id, name: who.label, ...period, code: kind.code, kind: kind.label, note, ...(dispensation ? { dispensation: true } : {}) })) });
   for (const item of impact) {
     if (item.ok === true) console.log(`  ✔ ${item.label}: masih bisa disusun, semua aturan bisa dipenuhi.`);
     else if (item.ok === false) {
@@ -521,8 +556,12 @@ async function runPermintaan(root, rl) {
   for (const period of periods) added = await appendRequest(file, { name: who.label, from: period.from, to: period.to, kind: kind.label, note });
   const span = (period) => `${formatTanggal(period.from, { denganHari: true })}${period.to !== period.from ? ` – ${formatTanggal(period.to, { denganHari: true })}` : ""}`;
   if (periods.length === 1) console.log(`✔ Ditambahkan di Data Roster.xlsx (sheet Cuti & Permintaan, baris ${added.row}): ${added.name}, ${added.kind}, ${span(periods[0])}.`);
-  else console.log(`✔ Ditambahkan ${periods.length} baris di Data Roster.xlsx (sheet Cuti & Permintaan): ${added.name}, ${added.kind}, setiap minggu dari ${span(periods[0])} sampai ${span(periods.at(-1))}.`);
-  if (from < todayIso) console.log("  Catatan: tanggal yang sudah lewat tidak diubah saat roster disusun ulang. Catat langsung di file roster, lalu jalankan menu 3 (Cek roster).");
+  else if (weekly) console.log(`✔ Ditambahkan ${periods.length} baris di Data Roster.xlsx (sheet Cuti & Permintaan): ${added.name}, ${added.kind}, setiap minggu dari ${span(periods[0])} sampai ${span(periods.at(-1))}.`);
+  else {
+    const dates = periods.flatMap((period) => Array.from({ length: Math.round((Date.parse(period.to) - Date.parse(period.from)) / 86_400_000) + 1 }, (_, day) => isoDate(addDays(period.from, day))));
+    console.log(`✔ Ditambahkan ${periods.length} baris di Data Roster.xlsx (sheet Cuti & Permintaan): ${added.name}, ${added.kind}, ${formatDaftarTanggal(dates)}.`);
+  }
+  if (periods[0].from < todayIso) console.log("  Catatan: tanggal yang sudah lewat tidak diubah saat roster disusun ulang. Catat langsung di file roster, lalu jalankan menu 3 (Cek roster).");
   // Rebuild the months that already have a roster (an update: only what is needed changes).
   const keys = [...new Set(periods.flatMap((period) => [period.from, period.to]).map((date) => date.slice(0, 7)))];
   for (const key of keys) {
@@ -579,7 +618,7 @@ async function runLibur(root, options) {
 }
 
 async function runKesiapan(root) {
-  const report = await periksaSistem({ root });
+  const report = await periksaSistem({ root, now: hariIni() });
   console.log(`\nKesiapan untuk membuat roster ${report.label}:`);
   const mark = { ok: "✔", perhatian: "!", masalah: "✖" };
   for (const item of report.items) console.log(`  ${mark[item.level]} ${item.text}`);
@@ -592,7 +631,7 @@ async function runMenu(root) {
   const rl = createPrompter();
   try {
     for (;;) {
-      const next = await nextMonthKey({ root });
+      const next = await nextMonthKey({ root, today: hariIni() });
       console.log(`\n${LINE}\n  ROSTER TIM OPS + NOC\n${LINE}`);
       console.log(`  1. Buat roster bulan berikutnya (${monthLabel(next)})`);
       console.log("  2. Buat roster bulan lain / buat ulang");
@@ -662,13 +701,23 @@ async function main() {
       if (!report.ok) process.exitCode = 1;
     }
     else if (["cuti", "permintaan"].includes(command)) {
-      if (!options.nama || !options.dari) throw new RosterError('Perintah cuti butuh --nama dan --dari, contoh: cuti --nama Addin --dari 2026-11-16 --sampai 2026-11-18');
-      for (const date of [options.dari, options.sampai].filter(Boolean)) {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new RosterError(`Tanggal "${date}" harus berformat TAHUN-BULAN-TANGGAL, contoh 2026-11-16.`);
-      }
+      if (!options.nama || !(options.dari || options.tanggal)) throw new RosterError('Perintah cuti butuh --nama dan --dari (atau --tanggal), contoh: cuti --nama Agus --dari 2026-11-16 --sampai 2026-11-18');
       await siapkanData({ root });
-      const added = await appendRequest(workspacePaths(root).inputWorkbook, { name: options.nama, from: options.dari, to: options.sampai, kind: options.jenis ?? "Cuti", note: options.keterangan ?? "" });
-      console.log(`✔ Ditambahkan di Data Roster.xlsx (sheet Cuti & Permintaan, baris ${added.row}): ${added.name}, ${added.kind}, ${formatTanggal(options.dari, { pendek: true })}${options.sampai ? ` – ${formatTanggal(options.sampai, { pendek: true })}` : ""}.`);
+      if (options.tanggal) {
+        // Several dates at once: one row per date or range.
+        const typed = parseDaftarTanggal(options.tanggal, { year: hariIni().getFullYear() });
+        if (!typed.periods) throw new RosterError(`Tanggal "${typed.invalid}" tidak dikenal. Contoh: --tanggal "5/11/2026, 12/11/2026-14/11/2026".`);
+        let added = null;
+        for (const period of typed.periods) added = await appendRequest(workspacePaths(root).inputWorkbook, { name: options.nama, ...period, kind: options.jenis ?? "Cuti", note: options.keterangan ?? "" });
+        const dates = typed.periods.flatMap((period) => Array.from({ length: Math.round((Date.parse(period.to) - Date.parse(period.from)) / 86_400_000) + 1 }, (_, day) => isoDate(addDays(period.from, day))));
+        console.log(`✔ Ditambahkan ${typed.periods.length} baris di Data Roster.xlsx (sheet Cuti & Permintaan): ${added.name}, ${added.kind}, ${formatDaftarTanggal(dates)}.`);
+      } else {
+        for (const date of [options.dari, options.sampai].filter(Boolean)) {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new RosterError(`Tanggal "${date}" harus berformat TAHUN-BULAN-TANGGAL, contoh 2026-11-16.`);
+        }
+        const added = await appendRequest(workspacePaths(root).inputWorkbook, { name: options.nama, from: options.dari, to: options.sampai, kind: options.jenis ?? "Cuti", note: options.keterangan ?? "" });
+        console.log(`✔ Ditambahkan di Data Roster.xlsx (sheet Cuti & Permintaan, baris ${added.row}): ${added.name}, ${added.kind}, ${formatTanggal(options.dari, { pendek: true })}${options.sampai ? ` – ${formatTanggal(options.sampai, { pendek: true })}` : ""}.`);
+      }
       console.log("  Buat ulang roster bulan itu agar perubahan dipakai.");
     } else if (["siapkan", "init"].includes(command)) {
       const prepared = await siapkanData({ root });

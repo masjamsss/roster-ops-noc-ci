@@ -14,6 +14,7 @@
 // recalculates. The definitions follow audit.mjs, quality.mjs and wellbeing.mjs;
 // keep them in step.
 import { SHORT_SICK_MAX_DAYS } from "./history.mjs";
+import { countsForShift2Share, excusedFromSplit, shift2Totals, shift2Uneven } from "./shift-share.mjs";
 import { WLB_POINTS } from "./wellbeing.mjs";
 
 // Enough past days to see a sickness that still blocks nights on the 1st (up to
@@ -21,12 +22,12 @@ import { WLB_POINTS } from "./wellbeing.mjs";
 const HISTORY_DAYS = 17;
 const LOOKAHEAD_DAYS = 6;
 const FIRST = 2; // the timeline starts in column B of "Hitungan"
-const PARAM = { maxWork: 2, nightMax: 3, recovery: 4, minRest: 5, maxOff: 6, sickFree: 7, limit: 8, leaveAsWork: 9, backward: 10, friday: 11, shortSickFree: 21 };
+const PARAM = { maxWork: 2, nightMax: 3, recovery: 4, minRest: 5, maxOff: 6, sickFree: 7, limit: 8, leaveAsWork: 9, backward: 10, friday: 11, shortSickFree: 21, nightShare: 22 };
 const SHIFT_ROW = { 1: 13, 2: 14, 3: 15, T: 16 }; // A code | B start | C end (night +24) | D level | E net hours
 const COVER_ROW = { weekdayMin: 18, specialExact: 19, specialMin: 20 }; // B, C, D = Shift 1, 2, 3
 const TL = { date: 23, inMonth: 24, weekend: 25, saturday: 26, friday: 27, special: 28, cover: 29, exact: 30, fridayMiss: 31 };
 const MEMBER_FIRST_ROW = 34;
-const ROWS = ["code", "work", "stretch", "streak", "nightRun", "lastNight", "rest", "offRun", "hours", "offLike", "req", "active", "sickRun", "sinceSick", "sinceLongSick",
+const ROWS = ["code", "work", "stretch", "streak", "nightRun", "lastNight", "rest", "offRun", "hours", "offLike", "req", "disp", "active", "sickRun", "sinceSick", "sinceLongSick",
   "vStreak", "vNightMax", "vRecovery", "vRest", "vBackward", "vEligible", "vOffMax", "vRequest", "vInactive", "vSick",
   "single", "isolated", "switch", "shortRecovery", "longBlock", "weeks"];
 const R = Object.fromEntries(ROWS.map((name, index) => [name, index]));
@@ -48,7 +49,8 @@ export const QUALITY_CHECKS = [
   ["terbalik", "penting", "Shift 2 lebih banyak dari Shift 1 di hari kerja"],
   ["jumat", "penting", "Jumat tanpa agen perempuan di Shift 1, padahal ada yang libur"],
   ["malam-adil", "perhatian", "Pembagian Shift 3 kurang merata (malam atau blok 3 malam)"],
-  ["seimbang-perempuan", "perhatian", "Shift 1 dan Shift 2 belum seimbang (selisih lebih dari 2)"],
+  ["seimbang-perempuan", "perhatian", "Shift 1 dan Shift 2 belum seimbang (yang tidak boleh Shift 3, selisih lebih dari 2)"],
+  ["shift2-merata", "perhatian", "Shift 1 dan Shift 2 kurang merata di antara yang boleh Shift 3 (Shift 2 lebih dari 1,5 hari dari bagian wajar)"],
   ["sehari-kerja", "perhatian", "Masuk kerja hanya 1 hari di antara libur"],
   ["target", "perhatian", "Hari kerja lebih dari 1 hari di bawah target"]
 ];
@@ -116,13 +118,15 @@ export function checkSheets(workbook, result, L, ui) {
     maxWork: rules.maxConsecutiveWorkDays, nightMax: rules.nightBlock.max, recovery: rules.nightRecoveryOffDays, minRest: rules.minimumRestHours,
     maxOff: rules.maxConsecutiveOffDays, sickFree: rules.nightFreeDaysAfterSick ?? 0, limit: rules.weeklyHoursLimit ?? 40,
     leaveAsWork: rules.leaveCountsAsWork === false ? 0 : 1, backward: rules.forbidBackwardShiftWithoutOff === false ? 0 : 1, friday: rules.fridayShift1Female === false ? 0 : 1,
-    shortSickFree: rules.nightFreeDaysAfterShortSick ?? rules.nightFreeDaysAfterSick ?? 0
+    shortSickFree: rules.nightFreeDaysAfterShortSick ?? rules.nightFreeDaysAfterSick ?? 0,
+    nightShare: rules.balanceNightWorkerDayShifts === false ? 0 : 1
   };
   const paramLabels = {
     maxWork: "Maksimal hari kerja berturut-turut", nightMax: "Shift 3 maksimal berturut-turut", recovery: "Libur setelah blok Shift 3", minRest: "Istirahat minimal (jam)",
     maxOff: "Maksimal libur (H) berturut-turut", sickFree: "Hari tanpa Shift 3 setelah sakit lama (3 hari atau lebih)", limit: "Batas jam kerja bersih per minggu",
     leaveAsWork: "Cuti dihitung hari kerja (1 = ya)", backward: "Larangan pindah shift mundur (1 = ya)", friday: "Jumat: agen perempuan di Shift 1 (1 = ya)",
-    shortSickFree: `Hari tanpa Shift 3 setelah sakit singkat (1–${SHORT_SICK_MAX_DAYS} hari)`
+    shortSickFree: `Hari tanpa Shift 3 setelah sakit singkat (1–${SHORT_SICK_MAX_DAYS} hari)`,
+    nightShare: "Shift 1 / Shift 2 merata untuk yang boleh Shift 3 (1 = ya)"
   };
   for (const [key, row] of Object.entries(PARAM)) {
     put(row, 1, paramLabels[key]);
@@ -202,6 +206,7 @@ export function checkSheets(workbook, result, L, ui) {
     const past = historyDates.map((_, i) => pastCodes[i - (historyDates.length - pastCodes.length)] ?? "-");
     const codes = [...past, ...result.days.map((day) => result.schedule[member.id][day.date]), ...lookDates.map((date) => result.horizonSchedule[member.id][date])];
     const requested = {};
+    const excused = {};
     for (const request of result.requests ?? []) {
       if (request.memberId !== member.id) continue;
       for (const date of result.days.map((day) => day.date)) {
@@ -209,6 +214,8 @@ export function checkSheets(workbook, result, L, ui) {
         // Several "Hindari" requests on one day combine: "!1" + "!3" = "!13".
         const before = requested[date];
         requested[date] = before?.startsWith("!") && request.code.startsWith("!") ? before + request.code.slice(1) : request.code;
+        // Dispensasi (user, 28 Oct): the excused shifts, e.g. "3" or "13".
+        if (request.dispensation && request.code.startsWith("!")) excused[date] = [...new Set([...(excused[date] ?? ""), ...request.code.slice(1)])].sort().join("");
       }
     }
     const activeOn = (date) => (!member.activeFrom || date >= member.activeFrom) && (!member.activeUntil || date <= member.activeUntil);
@@ -253,6 +260,8 @@ export function checkSheets(workbook, result, L, ui) {
       f(row("offLike"), column, `IF(OR(${c}="H",${c}="C",${c}="S"),1,0)`, g.offLike[t]);
       g.req[t] = inMonth(t) ? requested[date] ?? "" : "";
       put(row("req"), column, g.req[t]);
+      g.disp[t] = inMonth(t) ? excused[date] ?? "" : "";
+      put(row("disp"), column, g.disp[t]);
       g.active[t] = activeOn(date) ? 1 : 0;
       put(row("active"), column, g.active[t]);
       // sickness: days in a row, days since the last sick day, days since the last
@@ -352,6 +361,7 @@ export function checksSheet(workbook, result, L, ui, calc) {
   const { setCell, title, heading, headerCells, paragraph, C } = ui;
   const { layout, grids, dayCells, monthRange, pts, p, mp, M, H } = calc;
   const members = result.members;
+  const nightId = result.shifts?.find((shift) => shift.night)?.id ?? "3";
   const sheet = workbook.addWorksheet("Pemeriksaan", { pageSetup: { orientation: "landscape", paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
   [5, 14, 12, 12, 11, 11, 11, 11, 11, 11, 11, 11, 11, 10, 14, 10, 11].forEach((width, index) => (sheet.getColumn(index + 1).width = width));
   title(sheet, "PEMERIKSAAN ROSTER (dihitung ulang oleh Excel)",
@@ -430,10 +440,18 @@ export function checksSheet(workbook, result, L, ui, calc) {
     const count = (code) => month.filter((item) => item === code).length;
     const available = M - count("C") - count("S") - count("T") - count("-");
     const availableF = `(${M}-COUNTIF(${codeRange},"C")-COUNTIF(${codeRange},"S")-COUNTIF(${codeRange},"T")-COUNTIF(${codeRange},"-"))`;
+    // Days available for nights: without Dispensasi Shift 3 days (as quality.mjs).
+    const dispRange = `Hitungan!${monthRange(grid.row("disp")).replaceAll("$", "")}`;
+    const noNight = month.filter((code, i) => grid.g.disp[H + i].includes(nightId) && !["C", "S", "T", "-"].includes(code)).length;
+    const nightAvailable = available - noNight;
+    const nightAvailableF = `(${availableF}-SUMPRODUCT(ISNUMBER(FIND("${nightId}",${dispRange}))*(${codeRange}<>"C")*(${codeRange}<>"S")*(${codeRange}<>"T")*(${codeRange}<>"-")))`;
     const nights = count("3");
     const workDays = count("1") + count("2") + count("3");
-    const s1 = count("1");
-    const s2 = count("2");
+    // Shift 1 / Shift 2 for the split: without days with Dispensasi Shift 1 or 2 (shift-share.mjs).
+    const splitCount = (code) => month.filter((item, i) => item === code && !excusedFromSplit(grid.g.disp[H + i])).length;
+    const splitF = (code) => `SUMPRODUCT((${codeRange}="${code}")*ISERROR(FIND("1",${dispRange}))*ISERROR(FIND("2",${dispRange})))`;
+    const s1 = splitCount("1");
+    const s2 = splitCount("2");
     const weekRange = grid.weekCount ? `Hitungan!B${grid.row("weeks")}:${calc.col(grid.weekCount - 1)}${grid.row("weeks")}` : null;
     // Full weekends off: Saturday and Sunday both H, C or S, with the Sunday in the month.
     let fullWeekends = 0;
@@ -449,8 +467,8 @@ export function checksSheet(workbook, result, L, ui, calc) {
     const sumF = (name) => `SUM(Hitungan!${monthRange(grid.row(name)).replaceAll("$", "")})`;
     const limit = calc.paramValues.limit;
     return {
-      member, available, availableF, nights, nightsF: `COUNTIF(${codeRange},"3")`, workDays, workDaysF: `(COUNTIF(${codeRange},"1")+COUNTIF(${codeRange},"2")+COUNTIF(${codeRange},"3"))`,
-      s1, s2, s1F: `COUNTIF(${codeRange},"1")`, s2F: `COUNTIF(${codeRange},"2")`, fullWeekends, fullWeekendsF,
+      member, available, availableF, nightAvailable, nightAvailableF, nights, nightsF: `COUNTIF(${codeRange},"3")`, workDays, workDaysF: `(COUNTIF(${codeRange},"1")+COUNTIF(${codeRange},"2")+COUNTIF(${codeRange},"3"))`,
+      s1, s2, s1F: splitF("1"), s2F: splitF("2"), fullWeekends, fullWeekendsF,
       longBlocks: sumOf("longBlock"), longBlocksF: sumF("longBlock"), singles: sumOf("single"), singlesF: sumF("single"),
       isolated: sumOf("isolated"), isolatedF: sumF("isolated"), switches: sumOf("switch"), switchesF: sumF("switch"), shortRecovery: sumOf("shortRecovery"), shortRecoveryF: sumF("shortRecovery"),
       weekendDays: month.filter((code, i) => ["1", "2", "3"].includes(code) && [0, 6].includes(new Date(`${calc.dates[H + i]}T00:00:00Z`).getUTCDay())).length,
@@ -466,9 +484,11 @@ export function checksSheet(workbook, result, L, ui, calc) {
   });
   const present = (item) => item.available >= M / 2;
   const presentF = (item) => `${item.availableF}>=${M}/2`;
+  const nightPresent = (item) => item.nightAvailable >= M / 2;
+  const nightPresentF = (item) => `${item.nightAvailableF}>=${M}/2`;
   const nightMen = person.filter((item) => !item.member.dayOnly);
-  const scaled = (item) => (item.nights * M) / Math.max(1, item.available);
-  const menPresent = nightMen.filter(present);
+  const scaled = (item) => (item.nights * M) / Math.max(1, item.nightAvailable);
+  const menPresent = nightMen.filter(nightPresent);
   const spreadN = menPresent.length > 1 ? Math.max(...menPresent.map(scaled)) - Math.min(...menPresent.map(scaled)) : 0;
   const spreadL = menPresent.length > 1 ? Math.max(...menPresent.map((item) => item.longBlocks)) - Math.min(...menPresent.map((item) => item.longBlocks)) : 0;
   // Per-man values in cells (MAX/MIN over a range skip ""; "" typed into MAX is an error).
@@ -476,13 +496,30 @@ export function checksSheet(workbook, result, L, ui, calc) {
   hitungan.getCell(1, 18).value = "Malam per bulan (hadir)";
   hitungan.getCell(1, 19).value = "Blok 3 malam (hadir)";
   person.forEach((item, m) => {
-    const counted = !item.member.dayOnly && present(item);
-    hitungan.getCell(2 + m, 18).value = { formula: `IF(AND(${mp("dayOnly", m)}=0,${presentF(item)}),${item.nightsF}*${M}/MAX(1,${item.availableF}),"")`, result: counted ? scaled(item) : "" };
-    hitungan.getCell(2 + m, 19).value = { formula: `IF(AND(${mp("dayOnly", m)}=0,${presentF(item)}),${item.longBlocksF},"")`, result: counted ? item.longBlocks : "" };
+    const counted = !item.member.dayOnly && nightPresent(item);
+    hitungan.getCell(2 + m, 18).value = { formula: `IF(AND(${mp("dayOnly", m)}=0,${nightPresentF(item)}),${item.nightsF}*${M}/MAX(1,${item.nightAvailableF}),"")`, result: counted ? scaled(item) : "" };
+    hitungan.getCell(2 + m, 19).value = { formula: `IF(AND(${mp("dayOnly", m)}=0,${nightPresentF(item)}),${item.longBlocksF},"")`, result: counted ? item.longBlocks : "" };
   });
+  // Night workers' Shift 2 and Shift 1+2 days (shift-share.mjs): only people
+  // allowed Shift 1, 2 and 3 and present most of the month; "" otherwise.
+  hitungan.getCell(1, 20).value = "Shift 2 (boleh Shift 3, hadir)";
+  hitungan.getCell(1, 21).value = "Shift 1+2 (boleh Shift 3, hadir)";
+  const shareCounted = (item) => countsForShift2Share(item.member) && present(item);
+  person.forEach((item, m) => {
+    const condition = `AND(${mp("dayOnly", m)}=0,${mp("allow1", m)}=1,${mp("allow2", m)}=1,${presentF(item)})`;
+    hitungan.getCell(2 + m, 20).value = { formula: `IF(${condition},${item.s2F},"")`, result: shareCounted(item) ? item.s2 : "" };
+    hitungan.getCell(2 + m, 21).value = { formula: `IF(${condition},${item.s1F}+${item.s2F},"")`, result: shareCounted(item) ? item.s1 + item.s2 : "" };
+  });
+  const shareRows = person.filter(shareCounted);
+  const shareTotals = shift2Totals(shareRows);
+  const unevenValue = calc.paramValues.nightShare && shareRows.length > 1 ? shareRows.filter((item) => shift2Uneven(item, shareTotals)).length : 0;
   const lastPerson = 1 + members.length;
   const nightsRange = `Hitungan!$R$2:$R$${lastPerson}`;
   const longRange = `Hitungan!$S$2:$S$${lastPerson}`;
+  const s2Range = `Hitungan!$T$2:$T$${lastPerson}`;
+  const dayRange = `Hitungan!$U$2:$U$${lastPerson}`;
+  // |2 × (s2 × D − S × d)| > 3 × D, as shift2Uneven (no division, so Excel and the program agree exactly).
+  const unevenF = person.map((_, m) => `IF(Hitungan!$T$${2 + m}="",0,IF(ABS(2*(Hitungan!$T$${2 + m}*SUM(${dayRange})-SUM(${s2Range})*Hitungan!$U$${2 + m}))>3*SUM(${dayRange}),1,0))`).join("+");
   const qualityRows = {
     "jam-berat": [person.map((item) => item.heavyWeeksF).join("+"), person.reduce((sum, item) => sum + item.heavyWeeks, 0)],
     "akhir-pekan": [person.map((item) => `IF(AND(${presentF(item)},${item.fullWeekendsF}=0),1,0)`).join("+"), person.filter((item) => present(item) && item.fullWeekends === 0).length],
@@ -494,6 +531,7 @@ export function checksSheet(workbook, result, L, ui, calc) {
       menPresent.length > 1 && (spreadN >= 3 || spreadL >= 2) ? menPresent.length : 0
     ],
     "seimbang-perempuan": [person.filter((item) => item.member.dayOnly).map((item) => `IF(ABS(${item.s1F}-${item.s2F})>2,1,0)`).join("+") || "0", person.filter((item) => item.member.dayOnly && Math.abs(item.s1 - item.s2) > 2).length],
+    "shift2-merata": [`IF(AND(Hitungan!${p("nightShare")}=1,COUNT(${s2Range})>1),${unevenF},0)`, unevenValue],
     "sehari-kerja": [person.map((item) => item.singlesF).join("+"), person.reduce((sum, item) => sum + item.singles, 0)],
     target: [person.map((item) => `IF(AND(${presentF(item)},${item.workDaysF}<${item.targetF}-1),1,0)`).join("+"), person.filter((item) => present(item) && item.workDays < item.target - 1).length]
   };

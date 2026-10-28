@@ -13,7 +13,7 @@ import { workLifeBalance } from "./wellbeing.mjs";
 // Summary, day rows and quality review of a candidate roster (codes[member][day]).
 export function describeCandidate(input, codes) {
   const { members, days, ctx, config, env, historyCodes, historyDates, shiftIds, nightId } = input;
-  const summary = computeMemberSummary({ members, days, codes, historyCodes, historyDates, shiftIds, nightId, env, netHours: ctx.netHours, weeklyHoursLimit: ctx.weeklyHoursLimit, dailyHoursLimit: ctx.dailyHoursLimit });
+  const summary = computeMemberSummary({ members, days, codes, historyCodes, historyDates, shiftIds, nightId, env, netHours: ctx.netHours, weeklyHoursLimit: ctx.weeklyHoursLimit, dailyHoursLimit: ctx.dailyHoursLimit, dispensation: ctx.dispensation });
   const dayRows = computeDayRows({ days, codes, members, config });
   const publishedDays = days.filter((day) => day.published);
   const schedule = Object.fromEntries(members.map((member, i) => [member.id, Object.fromEntries(publishedDays.map((day) => [day.date, codes[i][day.dayIndex]]))]));

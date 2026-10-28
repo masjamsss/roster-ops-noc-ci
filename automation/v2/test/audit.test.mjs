@@ -57,24 +57,24 @@ test("a valid week passes every check", () => {
   assert.equal(result.checks.length, 12);
 });
 
-test("catches the old v2 October: Addin works 6 days in a row across the month boundary", () => {
+test("catches the old v2 October: Agus works 6 days in a row across the month boundary", () => {
   const september = parseRosterCsv(readFileSync(new URL("./fixtures/september-2026.csv", import.meta.url), "utf8"));
   const october = parseRosterCsv(readFileSync(new URL("./fixtures/old-v2-october-2026.csv", import.meta.url), "utf8"));
   const members = [
-    { id: "hilvani", name: "Hilvani", eligibleShifts: dayOnly }, { id: "pavitasari", name: "Pavitasari", eligibleShifts: dayOnly },
-    { id: "rizky", name: "Rizky", eligibleShifts: all }, { id: "willy", name: "Willy", eligibleShifts: all },
-    { id: "arman", name: "Arman", eligibleShifts: all }, { id: "addin", name: "Addin", eligibleShifts: all }
+    { id: "hana", name: "Hana", eligibleShifts: dayOnly }, { id: "putri", name: "Putri", eligibleShifts: dayOnly },
+    { id: "rudi", name: "Rudi", eligibleShifts: all }, { id: "wawan", name: "Wawan", eligibleShifts: all },
+    { id: "ardi", name: "Ardi", eligibleShifts: all }, { id: "agus", name: "Agus", eligibleShifts: all }
   ];
   const result = audit({ historyDates: september.dates, historyCodes: september.codesById, dates: october.dates, codes: october.codesById, members });
   const streak = check(result, "maks-hari-kerja");
   assert.equal(streak.ok, false);
-  const addin = streak.pelanggaran.find((item) => item.anggota === "Addin");
-  assert.ok(addin, "Addin must be reported");
-  assert.equal(addin.tanggal, "2026-10-02");
-  assert.match(addin.pesan, /6 hari/);
+  const agus = streak.pelanggaran.find((item) => item.anggota === "Agus");
+  assert.ok(agus, "Agus must be reported");
+  assert.equal(agus.tanggal, "2026-10-02");
+  assert.match(agus.pesan, /6 hari/);
 });
 
-test("night recovery: Arman cannot work 1 Oct after nights on 29-30 Sep", () => {
+test("night recovery: Ardi cannot work 1 Oct after nights on 29-30 Sep", () => {
   const history = { a: ["3", "3"] };
   const codes = withChange("a", 0, "1");
   const result = audit({ historyDates: HISTORY, historyCodes: history, dates: WEEK, codes, members: TEAM });

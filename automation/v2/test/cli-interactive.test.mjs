@@ -14,6 +14,9 @@ import { workspacePaths } from "../src/workspace.mjs";
 
 const CLI = fileURLToPath(new URL("../roster-cli.mjs", import.meta.url)); // .pathname is "/D:/..." on Windows
 const HOLIDAYS = new URL("../../../pengaturan/hari-libur/", import.meta.url);
+// The console runs as if it were 30 Sep 2026, the day before the test month, so a
+// rebuild freezes nothing and October is never "already past", whatever the real date.
+const ENV = { ...process.env, WT_SESSION: "1", ROSTER_HARI_INI: "2026-09-30" };
 
 async function newRoot() {
   const root = await mkdtemp(path.join(tmpdir(), "roster-cli-"));
@@ -29,7 +32,7 @@ async function newRoot() {
 
 function typeInto(root, lines) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [CLI, "menu", "--folder", root], { env: { ...process.env, WT_SESSION: "1" } });
+    const child = spawn(process.execPath, [CLI, "menu", "--folder", root], { env: ENV });
     let out = "";
     child.stdout.on("data", (chunk) => (out += chunk));
     child.stderr.on("data", (chunk) => (out += chunk));
@@ -41,24 +44,24 @@ function typeInto(root, lines) {
 
 test("menu 8: a special request ('Hindari Shift 3') is added by question and answer", { timeout: 120_000 }, async () => {
   const { root, paths } = await newRoot();
-  // 8 = request menu · 4 = Willy · 10 = Hindari Shift 3 · dates · not weekly · note · Enter · 0 = exit
+  // 8 = request menu · 4 = Wawan · 10 = Hindari Shift 3 · dates · not weekly · note · Enter · 0 = exit
   const out = await typeInto(root, ["8", "4", "10", "05/10/2026", "07/10/2026", "", "kuliah malam", "", "0"]);
   assert.match(out, /Ditambahkan/, out);
   const input = await readInputWorkbook(paths.inputWorkbook);
-  const request = input.requests.find((item) => item.name === "Willy");
+  const request = input.requests.find((item) => item.name === "Wawan");
   assert.deepEqual([request.code, request.from, request.to, request.note], ["!3", "2026-10-05", "2026-10-07", "kuliah malam"]);
 });
 
 test("menu 8: a shift the person may not work is refused in plain words and nothing is added", { timeout: 120_000 }, async () => {
   const { root, paths } = await newRoot();
-  const out = await typeInto(root, ["8", "1", "7", "", "0"]); // Hilvani · Minta Shift 3
-  assert.match(out, /Hilvani tidak boleh Shift 3/, out);
+  const out = await typeInto(root, ["8", "1", "7", "", "0"]); // Hana · Minta Shift 3
+  assert.match(out, /Hana tidak boleh Shift 3/, out);
   assert.equal((await readInputWorkbook(paths.inputWorkbook)).requests.length, 0);
 });
 
 test("an impossible month: the console offers a temporary member from outside the team, then completes the roster", { timeout: 300_000 }, async () => {
   const { root, paths } = await newRoot();
-  for (const name of ["Rizky", "Willy", "Arman", "Addin"]) await appendRequest(paths.inputWorkbook, { name, from: "2026-10-14", to: "2026-10-14", kind: "Cuti" });
+  for (const name of ["Rudi", "Wawan", "Ardi", "Agus"]) await appendRequest(paths.inputWorkbook, { name, from: "2026-10-14", to: "2026-10-14", kind: "Cuti" });
   // 1 = make next month · y = confirm the review · 1 = add a temporary member · name · shifts · gender · until (Enter = default) · Enter · 0
   const out = await typeInto(root, ["1", "y", "1", "Doni", "3", "L", "", "", "0"]);
   assert.match(out, /Tidak ada susunan yang mungkin pada Rabu, 14 Oktober 2026/, out);
@@ -72,49 +75,86 @@ test("an impossible month: the console offers a temporary member from outside th
 
 test("rebuilding a month edited by hand: the console asks to lock the edits, and they stay", { timeout: 300_000 }, async () => {
   const { root } = await newRoot();
-  const first = await buatRoster({ root, monthKey: "2026-10", online: false });
-  const before = first.result.schedule.hilvani["2026-10-20"];
+  const first = await buatRoster({ root, monthKey: "2026-10", online: false, now: new Date("2026-09-30T08:00:00") });
+  const before = first.result.schedule.hana["2026-10-20"];
   const wanted = before === "H" ? "1" : "H";
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(first.files.excel);
-  workbook.getWorksheet("Roster").getCell(8, 22).value = wanted; // Hilvani, 20 Oct
+  workbook.getWorksheet("Roster").getCell(8, 22).value = wanted; // Hana, 20 Oct
   await workbook.xlsx.writeFile(first.files.excel);
   // 2 = another month · month · y review · y rebuild · y lock · y keep · Enter · 0
   const out = await typeInto(root, ["2", "2026-10", "y", "y", "y", "y", "", "0"]);
   assert.match(out, /Kunci 1 perubahan manual/, out);
   assert.match(out, /1 perubahan manual dikunci/, out);
   const back = await readRosterWorkbook(first.files.excel);
-  assert.equal(back.codesById.hilvani[back.dates.indexOf("2026-10-20")], wanted);
+  assert.equal(back.codesById.hana[back.dates.indexOf("2026-10-20")], wanted);
 });
 
 test("leave or training that breaks a rule by itself: the console offers to open Data Roster.xlsx, not a temporary member", { timeout: 120_000 }, async () => {
   const { root, paths } = await newRoot();
-  await appendRequest(paths.inputWorkbook, { name: "Willy", from: "2026-10-17", to: "2026-10-22", kind: "Training/Dinas" });
+  await appendRequest(paths.inputWorkbook, { name: "Wawan", from: "2026-10-17", to: "2026-10-22", kind: "Training/Dinas" });
   const out = await typeInto(root, ["1", "y", "0", "", "0"]);
-  assert.match(out, /Willy: training\/dinas 17 Okt – 22 Okt = 6 hari kerja berturut-turut/, out);
+  assert.match(out, /Wawan: training\/dinas 17 Okt – 22 Okt = 6 hari kerja berturut-turut/, out);
   assert.match(out, /Buka Data Roster\.xlsx/);
   assert.doesNotMatch(out, /Tambah anggota sementara/);
 });
 
 test("menu 8 checks the impact first: leave that makes the month impossible is explained, and kept out unless the admin insists", { timeout: 120_000 }, async () => {
   const { root, paths } = await newRoot();
-  for (const name of ["Rizky", "Willy"]) await appendRequest(paths.inputWorkbook, { name, from: "2026-10-13", to: "2026-10-16", kind: "Cuti" });
-  // 8 · 5 = Arman · 1 = Cuti · dates · not weekly · no note · Enter = do not save · Enter · 0
+  for (const name of ["Rudi", "Wawan"]) await appendRequest(paths.inputWorkbook, { name, from: "2026-10-13", to: "2026-10-16", kind: "Cuti" });
+  // 8 · 5 = Ardi · 1 = Cuti · dates · not weekly · no note · Enter = do not save · Enter · 0
   const out = await typeInto(root, ["8", "5", "1", "13/10/2026", "16/10/2026", "", "", "", "", "0"]);
   assert.match(out, /TIDAK bisa disusun/, out);
   assert.match(out, /Shift 3 tidak mungkin terisi pada Jumat, 16 Oktober 2026/);
-  assert.match(out, /→ Bisa bila cuti Arman dimulai/, "the nearest dates that would work");
+  assert.match(out, /→ Bisa bila cuti Ardi dimulai/, "the nearest dates that would work");
   assert.match(out, /Tidak disimpan/);
-  assert.equal((await readInputWorkbook(paths.inputWorkbook)).requests.filter((request) => request.name === "Arman").length, 0);
+  assert.equal((await readInputWorkbook(paths.inputWorkbook)).requests.filter((request) => request.name === "Ardi").length, 0);
 });
 
 test("menu 8: a weekly request (an evening class every Tuesday) becomes one row per week", { timeout: 120_000 }, async () => {
   const { root, paths } = await newRoot();
-  // 8 · 4 = Willy · 10 = Hindari Shift 3 · Tue 6 Oct · same day · weekly until 27 Oct · note · Enter · 0
+  // 8 · 4 = Wawan · 10 = Hindari Shift 3 · Tue 6 Oct · same day · weekly until 27 Oct · note · Enter · 0
   const out = await typeInto(root, ["8", "4", "10", "06/10/2026", "", "27/10/2026", "kuliah", "", "0"]);
   assert.match(out, /4 baris/, out);
-  const rows = (await readInputWorkbook(paths.inputWorkbook)).requests.filter((request) => request.name === "Willy");
+  const rows = (await readInputWorkbook(paths.inputWorkbook)).requests.filter((request) => request.name === "Wawan");
   assert.deepEqual(rows.map((request) => [request.from, request.to, request.code]), [
     ["2026-10-06", "2026-10-06", "!3"], ["2026-10-13", "2026-10-13", "!3"], ["2026-10-20", "2026-10-20", "!3"], ["2026-10-27", "2026-10-27", "!3"]
   ]);
+});
+
+test("menu 8: a Dispensasi on several separate dates at once, with its reason (user, 28 Oct)", { timeout: 120_000 }, async () => {
+  const { root, paths } = await newRoot();
+  // 8 · 3 = Rudi · 13 = Dispensasi Shift 3 · three dates in one answer · reason · Enter · 0
+  const out = await typeInto(root, ["8", "3", "13", "05/10/2026, 12/10/2026-14/10/2026, 20/10/2026", "Ujian sertifikasi CCNA", "", "0"]);
+  assert.match(out, /Ditambahkan 3 baris.*Rudi, Dispensasi Shift 3, 5, 12–14 dan 20 Okt/, out);
+  const rows = (await readInputWorkbook(paths.inputWorkbook)).requests.filter((request) => request.name === "Rudi");
+  assert.deepEqual(rows.map((request) => [request.from, request.to, request.kind, request.note, request.dispensation]), [
+    ["2026-10-05", "2026-10-05", "Dispensasi Shift 3", "Ujian sertifikasi CCNA", true],
+    ["2026-10-12", "2026-10-14", "Dispensasi Shift 3", "Ujian sertifikasi CCNA", true],
+    ["2026-10-20", "2026-10-20", "Dispensasi Shift 3", "Ujian sertifikasi CCNA", true]
+  ]);
+});
+
+test("menu 8: a Dispensasi without a reason is not saved", { timeout: 120_000 }, async () => {
+  const { root, paths } = await newRoot();
+  const out = await typeInto(root, ["8", "3", "13", "16/10/2026", "31/10/2026", "", "", "", "", "0"]);
+  assert.match(out, /Alasan dispensasi \(wajib/, out);
+  assert.match(out, /Dispensasi perlu alasan/, out);
+  assert.doesNotMatch(out, /Mengecek apakah roster/, "asked before the impact check, not refused after it");
+  assert.equal((await readInputWorkbook(paths.inputWorkbook)).requests.length, 0);
+});
+
+test("the cuti command takes several dates with --tanggal, e.g. a Dispensasi on exam days", { timeout: 120_000 }, async () => {
+  const { root, paths } = await newRoot();
+  const out = await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [CLI, "cuti", "--folder", root, "--nama", "Rudi", "--tanggal", "5/10/2026, 12/10/2026-14/10/2026", "--jenis", "Dispensasi Shift 3", "--keterangan", "Sertifikasi CCNA"], { env: ENV });
+    let text = "";
+    child.stdout.on("data", (chunk) => (text += chunk));
+    child.stderr.on("data", (chunk) => (text += chunk));
+    child.on("error", reject);
+    child.on("close", () => resolve(text));
+  });
+  assert.match(out, /Ditambahkan 2 baris.*Rudi, Dispensasi Shift 3, 5 dan 12–14 Okt/, out);
+  const rows = (await readInputWorkbook(paths.inputWorkbook)).requests;
+  assert.deepEqual(rows.map((request) => [request.from, request.to, request.dispensation]), [["2026-10-05", "2026-10-05", true], ["2026-10-12", "2026-10-14", true]]);
 });

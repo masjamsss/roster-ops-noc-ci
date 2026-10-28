@@ -4,6 +4,7 @@
 // OM, in plain Indonesian.
 import { weekdayIndex } from "./date-utils.mjs";
 import { formatTanggal } from "./labels-id.mjs";
+import { countsForShift2Share, fairShift2, shift2Totals, shift2Uneven } from "./shift-share.mjs";
 
 const WORK = new Set(["1", "2", "3", "T"]);
 
@@ -44,10 +45,12 @@ export function reviewQuality(result) {
       }).map((day) => tgl(day.date)));
   }
 
-  // Nights per available day (leave and sickness do not count against anyone).
-  const nightMen = members.filter((member) => !member.dayOnly && presentMostOfMonth(member));
+  // Nights per available day (leave and sickness do not count against anyone,
+  // nor Dispensasi Shift 3 days: an approved exemption, user 28 Oct).
+  const nightAvailable = (member) => available(member) - (summaryOf(member).dispensationDays?.["3"] ?? 0);
+  const nightMen = members.filter((member) => !member.dayOnly && nightAvailable(member) >= days.length / 2);
   const nightsOf = (member) => summaryOf(member).shifts?.["3"] ?? 0;
-  const scaled = nightMen.map((member) => (nightsOf(member) * days.length) / Math.max(1, available(member)));
+  const scaled = nightMen.map((member) => (nightsOf(member) * days.length) / Math.max(1, nightAvailable(member)));
   // 3-night blocks counted in the month of their third night, so a block that
   // continues from last month counts here (as in the fairness and the Excel).
   const longOf = (member) => {
@@ -66,9 +69,26 @@ export function reviewQuality(result) {
       [...nightMen].sort((a, b) => nightsOf(b) - nightsOf(a)).map((member) => `${member.name} ${nightsOf(member)} malam${longOf(member) ? ` (${longOf(member)} blok 3 malam)` : ""}`));
   }
 
-  add("seimbang-perempuan", "perhatian", "Shift 1 dan Shift 2 belum seimbang",
-    members.filter((member) => member.dayOnly && Math.abs((summaryOf(member).shifts?.["1"] ?? 0) - (summaryOf(member).shifts?.["2"] ?? 0)) > 2)
-      .map((member) => `${member.name} Shift 1 ${summaryOf(member).shifts["1"]} / Shift 2 ${summaryOf(member).shifts["2"]}`));
+  // Shift 1 / Shift 2 without the days with Dispensasi Shift 1 or 2 (approved,
+  // so not made up later; shift-share.mjs). Without a Dispensasi: all days.
+  const splitOf = (member) => summaryOf(member).splitShifts ?? summaryOf(member).shifts ?? {};
+  const s1Of = (member) => splitOf(member)["1"] ?? 0;
+  const s2Of = (member) => splitOf(member)["2"] ?? 0;
+  const dispensedNote = (member) => (s1Of(member) + s2Of(member) < (summaryOf(member).shifts?.["1"] ?? 0) + (summaryOf(member).shifts?.["2"] ?? 0) ? " tanpa hari dispensasi" : "");
+  add("seimbang-perempuan", "perhatian", "Shift 1 dan Shift 2 belum seimbang (yang tidak boleh Shift 3)",
+    members.filter((member) => member.dayOnly && Math.abs(s1Of(member) - s2Of(member)) > 2)
+      .map((member) => `${member.name} Shift 1 ${s1Of(member)} / Shift 2 ${s2Of(member)}${dispensedNote(member)}`));
+
+  // Night workers: Shift 2 days near a fair share (shift-share.mjs; user, 28 Oct).
+  if (rules.balanceNightWorkerDayShifts !== false) {
+    const rows = members.filter((member) => countsForShift2Share(member) && presentMostOfMonth(member))
+      .map((member) => ({ member, s1: s1Of(member), s2: s2Of(member) }));
+    const totals = shift2Totals(rows);
+    if (rows.length > 1) {
+      add("shift2-merata", "perhatian", "Shift 1 dan Shift 2 kurang merata di antara yang boleh Shift 3",
+        rows.filter((row) => shift2Uneven(row, totals)).map((row) => `${row.member.name} Shift 1 ${row.s1} / Shift 2 ${row.s2}${dispensedNote(row.member)} (wajar sekitar ${Math.round(fairShift2(row, totals))} Shift 2)`));
+    }
+  }
 
   // A single work day between days off (not at the month edges, which continue).
   const singles = [];

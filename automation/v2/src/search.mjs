@@ -34,7 +34,7 @@ function stateKey(states, night, members, shiftIds, blockCap) {
     const s = states[index];
     key += `|${s.previousCode}${category(s.previousPreviousCode, shiftIds)}${s.workStreak}.${s.offStreak}.${Math.min(s.restStreak, 3)}.${Math.min(s.shiftStreak, 3)}.${s.lastWorkedShift ?? "x"}${s.lastWorkWasNight ? "n" : ""}${s.nightStreak}.${Math.min(s.lastWorkBlockLength, blockCap)}.${s.workCount}.${s.weekendWorkCount}.${Math.min(s.fullWeekendsOff, 2)}`;
     if (members[index].dayOnly) key += `.${s.s1Count - s.s2Count}`;
-    else key += `.${Math.min(s.daysSinceNight ?? 99, 7)}`;
+    else key += `.${Math.min(s.daysSinceNight ?? 99, 7)}.${s.s2Count}`; // s2Count stays 0 when the split is not balanced
     key += `w${Math.min(s.weekHours ?? 0, 41)}`;
   }
   return key;

@@ -2,6 +2,7 @@ import { isOffLike, isWorkLike } from "./codes.mjs";
 import { shiftWindow, weekdayIndex } from "./date-utils.mjs";
 import { NO_HISTORY, SHORT_SICK_MAX_DAYS } from "./history.mjs";
 import { KODE_LABEL } from "./labels-id.mjs";
+import { countsForShift2Share, excusedFromSplit } from "./shift-share.mjs";
 
 export function isActive(member, date) {
   return (!member.activeFrom || date >= member.activeFrom) && (!member.activeUntil || date <= member.activeUntil);
@@ -28,6 +29,7 @@ export function initialMemberState(carry, member) {
     holidayWorkCount: 0,
     fullWeekendsOff: 0,
     availableDays: 0,
+    nightAvailableDays: 0,
     excusedCount: 0,
     memberId: member.id
   };
@@ -189,11 +191,19 @@ export function transitionMember(state, member, code, day, ctx, { requested = fa
       if (night) next.nightCount = state.nightCount + 1;
       if (day.isWeekend) next.weekendWorkCount = state.weekendWorkCount + 1;
       if (day.isHoliday) next.holidayWorkCount = state.holidayWorkCount + 1;
+      // Days with Dispensasi Shift 1 or 2 are left out of the split (shift-share.mjs).
+      const splitDay = !excusedFromSplit(ctx.dispensation?.[day.dayIndex]?.[member.id]);
       if (member.dayOnly && rules.balanceDayOnlyShifts && !night) {
+        if (splitDay) {
+          next.s1Count = state.s1Count + (code === "1" ? 1 : 0);
+          next.s2Count = state.s2Count + (code === "2" ? 1 : 0);
+          const drift = Math.abs(next.s1Count - next.s2Count);
+          if (drift > 2) score += weights.dayShiftImbalance * (drift - 2);
+        }
+      } else if (!night && splitDay && rules.balanceNightWorkerDayShifts !== false && countsForShift2Share(member)) {
+        // Night workers: counted for their fair share of Shift 2 (scored in objective.mjs).
         next.s1Count = state.s1Count + (code === "1" ? 1 : 0);
         next.s2Count = state.s2Count + (code === "2" ? 1 : 0);
-        const drift = Math.abs(next.s1Count - next.s2Count);
-        if (drift > 2) score += weights.dayShiftImbalance * (drift - 2);
       }
     }
   } else {
@@ -223,6 +233,11 @@ export function transitionMember(state, member, code, day, ctx, { requested = fa
   // Rosterable days exclude leave, sickness and training; those are "excused"
   // days that count 1:1 against the person's monthly workday target.
   if (day.published && (code === "C" || code === "S" || code === "T")) next.excusedCount = state.excusedCount + 1;
-  else if (day.published && code !== "-") next.availableDays = state.availableDays + 1;
+  else if (day.published && code !== "-") {
+    next.availableDays = state.availableDays + 1;
+    // Dispensasi Shift 3 (user, 28 Oct): an approved exemption, so not a day the
+    // person could have done a night; the night share is measured without it.
+    if (code === ctx.nightShiftId || !ctx.dispensation?.[day.dayIndex]?.[member.id]?.has(ctx.nightShiftId)) next.nightAvailableDays = (state.nightAvailableDays ?? 0) + 1;
+  }
   return { state: next, score };
 }

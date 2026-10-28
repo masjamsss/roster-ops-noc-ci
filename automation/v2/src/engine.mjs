@@ -6,7 +6,7 @@ import { auditTimeline } from "./audit.mjs";
 import { addDays, diffDays, isoDate, isWeekend, monthBounds, monthKey, parseClock, weekdayIndex } from "./date-utils.mjs";
 import { buildDays } from "./days.mjs";
 import { RosterError } from "./errors.mjs";
-import { deriveMemberState, deriveNightQueue, rollingStats } from "./history.mjs";
+import { deriveMemberState, deriveNightQueue, dispensationDates, rollingStats } from "./history.mjs";
 import { formatPeriode, formatTanggal, KODE_LABEL } from "./labels-id.mjs";
 import { overtimeCover } from "./backup-plan.mjs";
 import { buildNotes, computeDayRows, computeMemberSummary, findNightBlocks } from "./metrics.mjs";
@@ -186,6 +186,21 @@ function buildAvoid(config, members, days) {
   return avoid;
 }
 
+// Dispensasi (user, 28 Oct): the shifts excused per day and person, a subset of
+// `avoid`. Those days are not counted in the share of that shift (objective.mjs,
+// history.mjs), so the person makes nothing up later.
+function buildDispensation(config, members, days) {
+  const dispensation = days.map(() => ({}));
+  for (const request of config.requests) {
+    if (!request.dispensation || !request.code.startsWith("!")) continue;
+    days.forEach((day, d) => {
+      if (day.date < request.from || day.date > request.to) return;
+      for (const shiftId of request.code.slice(1)) (dispensation[d][request.memberId] ??= new Set()).add(shiftId);
+    });
+  }
+  return dispensation;
+}
+
 function buildFixed(config, members, days, nightId, shiftIds) {
   const fixed = days.map(() => ({}));
   const byId = new Map(members.map((member) => [member.id, member]));
@@ -268,12 +283,13 @@ const clock = (hours) => `${String(Math.floor(hours) % 24).padStart(2, "0")}:${S
 // second person is on the shift), "lembur" (overtime of the neighbouring shifts
 // closes the gap), "pengganti" / "darurat" (someone off that day takes the
 // whole shift, emergency = a 6th day in a row), "kosong" (nothing in the team).
-function planBackups({ members, days, timeline, offset, backups, config }) {
+function planBackups({ members, days, timeline, offset, backups, config, ctx }) {
   const byKey = new Map(backups.map((entry) => [`${entry.date}|${entry.shift}`, entry]));
   return days.filter((day) => day.published).flatMap((day) => config.shifts.map((shift) => {
     const plan = overtimeCover({
       dayIndex: offset + day.dayIndex, shiftId: shift.id, timeline, members, shifts: config.shifts,
-      minimumRestHours: config.rules.minimumRestHours, overtimeHours: config.rules.overtimeHours ?? 4
+      minimumRestHours: config.rules.minimumRestHours, overtimeHours: config.rules.overtimeHours ?? 4,
+      excluded: new Set(Object.entries(ctx?.avoid?.[day.dayIndex] ?? {}).filter(([, shifts]) => shifts.has(shift.id)).map(([id]) => id))
     });
     const replacement = byKey.get(`${day.date}|${shift.id}`) ?? { names: [], stretched: [] };
     const status = plan.safe ? "aman" : plan.uncovered.length === 0 ? "lembur" : replacement.names.length ? "pengganti" : replacement.stretched.length ? "darurat" : "kosong";
@@ -320,14 +336,15 @@ function weekHoursAtStart(codes, monthStart, netHours) {
 
 // Shift 3 per night person over the months the fairness looks at (up to two
 // earlier months) and this month: nights, 3-night blocks and available days.
-function nightFairness({ members, published, codes, history, nightId, shiftIds, key }) {
+function nightFairness({ members, published, codes, history, nightId, shiftIds, key, requests }) {
   const night = members.filter((member) => member.eligibleShifts.includes(nightId));
   const earlier = history?.stats ?? {};
   const earlierKeys = [...new Set(night.flatMap((member) => (earlier[member.id]?.perMonth ?? []).map((item) => item.key)))].sort();
   const current = { key, dates: published.map((day) => day.date), codesById: Object.fromEntries(members.map((member, i) => [member.id, published.map((day) => codes[i][day.dayIndex])])) };
   const months = history?.dates?.length ? [{ key: history.key, dates: history.dates, codesById: history.codesById }, current] : [current];
-  const now = rollingStats(months, night.map((member) => member.id), shiftIds, nightId);
-  const pick = (item, monthKeyValue) => (item ? { key: monthKeyValue, nights: item.nightDays, longBlocks: item.longNightBlocks, availableDays: item.availableDays } : null);
+  const now = rollingStats(months, night.map((member) => member.id), shiftIds, nightId, 3, { noNight: dispensationDates(requests, nightId) });
+  // Days the person could do nights: without leave, sickness, training and Dispensasi Shift 3.
+  const pick = (item, monthKeyValue) => (item ? { key: monthKeyValue, nights: item.nightDays, longBlocks: item.longNightBlocks, availableDays: item.nightAvailableDays ?? item.availableDays } : null);
   return {
     months: [...earlierKeys, key],
     members: night.map((member) => ({
@@ -367,6 +384,7 @@ export function prepareMonth({ config, calendars, history }) {
   const fixed = buildFixed(config, members, days, nightId, shiftIds);
   const avoid = buildAvoid(config, members, days);
   ctx.avoid = avoid;
+  ctx.dispensation = buildDispensation(config, members, days);
   checkCapacity(config, members, days, fixed);
 
   const initialStates = members.map((member, i) => ({
@@ -379,7 +397,7 @@ export function prepareMonth({ config, calendars, history }) {
   const initialQueue = deriveNightQueue(window.codesById, nightCapable, nightId);
   const initialNight = initialNightState(window.codesById, initialQueue, nightId);
   const patternsPerDay = days.map((day, d) => buildDayPatterns({ day, fixedToday: fixed[d], avoidToday: avoid[d], members, config, nightId }));
-  const env = makeEnv(config, days, members, fixed);
+  const env = makeEnv(config, days, members, fixed, ctx.dispensation);
   const rolling = fairnessOffsets(members, history?.stats);
   env.nightOffset = rolling.nights;
   env.weekendOffset = rolling.weekends;
@@ -663,7 +681,7 @@ async function buildRoster({ config, calendars, history, onProgress }) {
       .map((item) => ({ memberId: item.member.id, name: item.member.name, date: item.date, from: item.from, to: item.to }))
     : [];
   const backups = findBackups({ members, days, codes, initialStates, ctx, fixed, shifts: config.shifts });
-  const backupPlan = planBackups({ members, days, timeline, offset: window.dates.length, backups, config });
+  const backupPlan = planBackups({ members, days, timeline, offset: window.dates.length, backups, config, ctx });
 
   const minimalReasons = explainMinimalDays({
     members, days, codes, initialStates, ctx, fixed, dayRows, timeline, dates: [...window.dates, ...horizonDates], offset: window.dates.length, summary
@@ -693,7 +711,7 @@ async function buildRoster({ config, calendars, history, onProgress }) {
     schedule: toSchedule(published),
     horizonSchedule: toSchedule(days),
     history: { key: history?.key ?? null, source: history?.source ?? "none", dates: window.dates, codesById: window.codesById },
-    fairness: nightFairness({ members, published, codes, history, nightId, shiftIds, key: monthKey(config.period.year, config.period.month) }),
+    fairness: nightFairness({ members, published, codes, history, nightId, shiftIds, key: monthKey(config.period.year, config.period.month), requests: [...(history?.dispensations ?? []), ...config.requests] }),
     wellbeing: workLifeBalance({ members, days: dayRows, schedule: toSchedule(published), memberSummary: summary, settings: { rules: config.rules }, history: { codesById: window.codesById } }),
     days: dayRows,
     memberSummary: summary,

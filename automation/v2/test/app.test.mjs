@@ -50,8 +50,8 @@ test("October → November → December chain from the September seed", { timeou
   }
 
   // A manual edit that breaks night recovery is caught by "cek".
-  const armanRow = 8 + 4;
-  await editWorkbook(files.excel, (workbook) => (workbook.getWorksheet("Roster").getCell(armanRow, 3).value = "1"));
+  const ardiRow = 8 + 4;
+  await editWorkbook(files.excel, (workbook) => (workbook.getWorksheet("Roster").getCell(ardiRow, 3).value = "1"));
   const check = await cekRoster({ root, monthKey: "2026-10" });
   assert.equal(check.ok, false);
   assert.equal(check.checks.find((item) => item.id === "istirahat-malam").ok, false);
@@ -80,15 +80,15 @@ test("members can join and leave through Data Roster.xlsx", { timeout: 300_000 }
   const november = await buatRoster({ root, online: false });
   assert.equal(november.result.audit.ok, true, JSON.stringify(november.result.audit.checks.filter((item) => !item.ok), null, 1));
   assert.ok(november.result.members.some((member) => member.id === "budi"));
-  assert.equal(november.result.schedule.willy["2026-11-16"], "-");
+  assert.equal(november.result.schedule.wawan["2026-11-16"], "-");
   assert.ok(Object.values(november.result.schedule.budi).some((code) => code === "3"), "the newcomer joins the night rotation");
 });
 
 test("the review before generating lists active agents, joiners, leavers, leave and holidays", { timeout: 120_000 }, async () => {
   const { root, paths } = await newRoot();
   await siapkanData({ root });
-  await appendRequest(paths.inputWorkbook, { name: "Addin", from: "2026-12-16", to: "2026-12-18", kind: "Cuti", note: "Cuti tahunan" });
-  await appendRequest(paths.inputWorkbook, { name: "Rizky", from: "2027-01-05", to: "2027-01-06", kind: "Cuti" });
+  await appendRequest(paths.inputWorkbook, { name: "Agus", from: "2026-12-16", to: "2026-12-18", kind: "Cuti", note: "Cuti tahunan" });
+  await appendRequest(paths.inputWorkbook, { name: "Rudi", from: "2027-01-05", to: "2027-01-06", kind: "Cuti" });
   await editWorkbook(paths.inputWorkbook, (workbook) => {
     const sheet = workbook.getWorksheet(INPUT_LAYOUT.members.sheet);
     sheet.getRow(INPUT_LAYOUT.members.firstRow + 3).getCell(9).value = new Date("2026-12-15T00:00:00Z");
@@ -102,16 +102,17 @@ test("the review before generating lists active agents, joiners, leavers, leave 
   assert.equal(preview.label, "Desember 2026");
   assert.equal(preview.members.length, 7);
   assert.deepEqual(preview.joining.map((member) => member.name), ["Budi"]);
-  assert.deepEqual(preview.leaving.map((member) => member.name), ["Willy"]);
-  assert.deepEqual(preview.requests.map((request) => [request.name, request.kind, request.days]), [["Addin", "Cuti", 3]], "only leave inside the month");
+  assert.deepEqual(preview.leaving.map((member) => member.name), ["Wawan"]);
+  assert.deepEqual(preview.requests.map((request) => [request.name, request.kind, request.days]), [["Agus", "Cuti", 3]], "only leave inside the month");
   assert.deepEqual(preview.holidays.map((day) => day.date), ["2026-12-24", "2026-12-25"]);
-  assert.match(preview.lines.join("\n"), /Addin — Cuti 16–18 Des \(3 hari\)/);
+  assert.match(preview.lines.join("\n"), /Agus — Cuti 16–18 Des \(3 hari\)/);
   // The choices of the Aturan sheet, in plain words, before anything is made.
   const text = preview.lines.join("\n");
   assert.match(text, /Pilihan di sheet Aturan/);
   assert.match(text, /Target yang boleh Shift 3: sama dengan yang lain/);
   assert.match(text, /Setelah sakit 3 hari atau lebih: tanpa Shift 3 selama 5 hari/);
   assert.match(text, /Setelah sakit 1–2 hari: tanpa Shift 3 selama 5 hari/);
+  assert.match(text, /Shift 2 dibagi merata untuk yang boleh Shift 3: Ya/);
 });
 
 test("buat roster in best-result mode tries the default variants and keeps the best", { timeout: 600_000 }, async () => {
@@ -129,14 +130,14 @@ test("updating an existing month after sudden sickness: past days frozen, few ch
   const { root, paths } = await newRoot();
   await siapkanData({ root });
   const first = await buatRoster({ root, monthKey: "2026-10", online: false });
-  await appendRequest(paths.inputWorkbook, { name: "Rizky", from: "2026-10-13", to: "2026-10-15", kind: "Sakit", note: "Rawat inap" });
+  await appendRequest(paths.inputWorkbook, { name: "Rudi", from: "2026-10-13", to: "2026-10-15", kind: "Sakit" });
   const updated = await buatRoster({ root, monthKey: "2026-10", online: false, force: true, keep: true, now: new Date("2026-10-12T08:00:00") });
   const before = first.result.schedule;
   const after = updated.result.schedule;
   for (const id of Object.keys(before)) {
     for (const date of Object.keys(before[id])) if (date < "2026-10-12") assert.equal(after[id][date], before[id][date], `${id} ${date} already worked: unchanged`);
   }
-  assert.deepEqual(["2026-10-13", "2026-10-14", "2026-10-15"].map((date) => after.rizky[date]), ["S", "S", "S"]);
+  assert.deepEqual(["2026-10-13", "2026-10-14", "2026-10-15"].map((date) => after.rudi[date]), ["S", "S", "S"]);
   assert.equal(updated.result.freezeBefore, "2026-10-12");
   assert.ok(updated.result.changes.length > 0 && updated.result.changes.length <= 40, `${updated.result.changes.length} changes`);
   assert.ok(updated.archived, "the previous version is archived");
@@ -154,7 +155,7 @@ test("rebuilding freely still marks every change against the old version and nev
   const { root, paths } = await newRoot();
   await siapkanData({ root });
   const first = await buatRoster({ root, monthKey: "2026-10", online: false });
-  await appendRequest(paths.inputWorkbook, { name: "Addin", from: "2026-10-20", to: "2026-10-22", kind: "Cuti", note: "Keluarga" });
+  await appendRequest(paths.inputWorkbook, { name: "Agus", from: "2026-10-20", to: "2026-10-22", kind: "Cuti", note: "Keluarga" });
   const rebuilt = await buatRoster({ root, monthKey: "2026-10", online: false, force: true, keep: false, now: new Date("2026-10-12T08:00:00") });
   for (const [id, row] of Object.entries(first.result.schedule)) {
     for (const [date, code] of Object.entries(row)) if (date < "2026-10-12") assert.equal(rebuilt.result.schedule[id][date], code, `${id} ${date} already worked: unchanged`);
@@ -169,7 +170,7 @@ test("updating in best mode also tries a lighter and a stronger 'keep' setting",
   const { root, paths } = await newRoot();
   await siapkanData({ root });
   await buatRoster({ root, monthKey: "2026-10", online: false });
-  await appendRequest(paths.inputWorkbook, { name: "Willy", from: "2026-10-20", to: "2026-10-21", kind: "Cuti" });
+  await appendRequest(paths.inputWorkbook, { name: "Wawan", from: "2026-10-20", to: "2026-10-21", kind: "Cuti" });
   const done = await buatRoster({ root, monthKey: "2026-10", online: false, force: true, keep: true, best: true, now: new Date("2026-10-15T08:00:00") });
   assert.equal(done.result.search.portfolio.filter((entry) => entry.round === 0).length, 8, "6 search variants + 2 keep strengths");
   assert.ok(done.result.search.portfolio.filter((entry) => entry.round > 0).every((entry) => entry.aim?.length), "any extra attempt says what it aimed at");
@@ -213,12 +214,12 @@ test("lock the manual edits and fill the rest: the admin's change stays, everyth
   const { root } = await newRoot();
   await siapkanData({ root });
   const first = await buatRoster({ root, monthKey: "2026-10", online: false });
-  // Hilvani (row 8) gets 15 Oct off by hand (column C = 1 Oct, so 15 Oct = column 17).
-  const working = first.result.schedule.hilvani["2026-10-15"];
+  // Hana (row 8) gets 15 Oct off by hand (column C = 1 Oct, so 15 Oct = column 17).
+  const working = first.result.schedule.hana["2026-10-15"];
   assert.notEqual(working, "H", "she was working that day");
   await editWorkbook(first.files.excel, (workbook) => (workbook.getWorksheet("Roster").getCell(8, 17).value = "H"));
   const filled = await buatRoster({ root, monthKey: "2026-10", online: false, force: true, keep: true, lockManual: true, now: new Date("2026-09-30T08:00:00") });
-  assert.equal(filled.result.schedule.hilvani["2026-10-15"], "H", "the manual change is kept");
+  assert.equal(filled.result.schedule.hana["2026-10-15"], "H", "the manual change is kept");
   assert.equal(filled.result.audit.ok, true, "every rule holds around it");
   assert.equal(filled.locked, 1);
   assert.ok(filled.warnings.some((warning) => /1 perubahan manual dikunci/.test(warning)), filled.warnings.join("\n"));
@@ -230,10 +231,10 @@ test("lock the manual edits: the console is told how many there are, and a newer
   const first = await buatRoster({ root, monthKey: "2026-10", online: false });
   await editWorkbook(first.files.excel, (workbook) => (workbook.getWorksheet("Roster").getCell(8, 17).value = "H"));
   await assert.rejects(buatRoster({ root, monthKey: "2026-10", online: false }), (error) => error.details?.reason === "edited" && error.details.manualCount === 1);
-  // Later Hilvani asks to work Shift 1 that day: the request is newer than the edit.
-  await appendRequest(workspacePaths(root).inputWorkbook, { name: "Hilvani", from: "2026-10-15", to: "2026-10-15", kind: "Minta Shift 1" });
+  // Later Hana asks to work Shift 1 that day: the request is newer than the edit.
+  await appendRequest(workspacePaths(root).inputWorkbook, { name: "Hana", from: "2026-10-15", to: "2026-10-15", kind: "Minta Shift 1" });
   const filled = await buatRoster({ root, monthKey: "2026-10", online: false, force: true, keep: true, lockManual: true, now: new Date("2026-09-30T08:00:00") });
-  assert.equal(filled.result.schedule.hilvani["2026-10-15"], "1");
+  assert.equal(filled.result.schedule.hana["2026-10-15"], "1");
   assert.equal(filled.locked, 0);
   assert.ok(filled.warnings.some((warning) => /1 perubahan manual tidak dikunci/.test(warning)), filled.warnings.join("\n"));
 });
@@ -241,18 +242,18 @@ test("lock the manual edits: the console is told how many there are, and a newer
 test("before leave is saved, its impact is checked: still possible, or why not", { timeout: 120_000 }, async () => {
   const { root, paths } = await newRoot();
   await siapkanData({ root });
-  for (const name of ["Rizky", "Willy"]) await appendRequest(paths.inputWorkbook, { name, from: "2026-10-13", to: "2026-10-16", kind: "Cuti" });
-  const fine = await cekDampakPermintaan({ root, request: { memberId: "hilvani", name: "Hilvani", from: "2026-10-20", to: "2026-10-21", code: "C", kind: "Cuti" } });
+  for (const name of ["Rudi", "Wawan"]) await appendRequest(paths.inputWorkbook, { name, from: "2026-10-13", to: "2026-10-16", kind: "Cuti" });
+  const fine = await cekDampakPermintaan({ root, request: { memberId: "hana", name: "Hana", from: "2026-10-20", to: "2026-10-21", code: "C", kind: "Cuti" } });
   assert.deepEqual(fine.map((item) => [item.key, item.ok]), [["2026-10", true]]);
   const started = Date.now();
-  const blocked = await cekDampakPermintaan({ root, request: { memberId: "arman", name: "Arman", from: "2026-10-13", to: "2026-10-16", code: "C", kind: "Cuti" } });
+  const blocked = await cekDampakPermintaan({ root, request: { memberId: "ardi", name: "Ardi", from: "2026-10-13", to: "2026-10-16", code: "C", kind: "Cuti" } });
   assert.equal(blocked[0].ok, false);
   assert.match(blocked[0].reason, /Shift 3 tidak mungkin terisi/);
   assert.equal(blocked[0].date, "2026-10-16");
   assert.ok(blocked[0].suggestions.some((text) => /Bisa bila .*dimulai/.test(text)), blocked[0].suggestions.join("\n"));
   assert.ok(blocked[0].suggestions.some((text) => /orang luar tim/.test(text)), blocked[0].suggestions.join("\n"));
   assert.ok(Date.now() - started < 30_000, "an answer within seconds");
-  const unknown = await cekDampakPermintaan({ root, request: { memberId: "arman", name: "Arman", from: "2026-12-01", to: "2026-12-02", code: "C", kind: "Cuti" } });
+  const unknown = await cekDampakPermintaan({ root, request: { memberId: "ardi", name: "Ardi", from: "2026-12-01", to: "2026-12-02", code: "C", kind: "Cuti" } });
   assert.equal(unknown[0].ok, null, "December cannot be checked before November exists");
   assert.match(unknown[0].reason, /belum bisa dicek/);
 });

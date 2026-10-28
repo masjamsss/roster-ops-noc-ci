@@ -14,9 +14,9 @@ import { appendRequest, INPUT_LAYOUT } from "../src/input-workbook.mjs";
 const REAL_ROOT = process.env.ROSTER_DATA ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const MONTHS = ["2026-10", "2026-11", "2026-12", "2027-01", "2027-02", "2027-03"];
 const EVENTS = [
-  ["Addin", "2026-11-16", "2026-11-18", "Cuti"], ["Willy", "2026-11-09", "2026-11-09", "Training/Dinas"],
-  ["Hilvani", "2026-12-28", "2026-12-31", "Cuti"],
-  ["Rizky", "2027-03-12", "2027-03-16", "Cuti"], ["Pavitasari", "2027-03-12", "2027-03-16", "Cuti"]
+  ["Agus", "2026-11-16", "2026-11-18", "Cuti"], ["Wawan", "2026-11-09", "2026-11-09", "Training/Dinas"],
+  ["Hana", "2026-12-28", "2026-12-31", "Cuti"],
+  ["Rudi", "2027-03-12", "2027-03-16", "Cuti"], ["Putri", "2027-03-12", "2027-03-16", "Cuti"]
 ];
 const baseline = JSON.parse(process.argv[2] ?? '{"diverse":false,"polishMs":0}');
 const candidate = JSON.parse(process.argv[3] ?? "{}");

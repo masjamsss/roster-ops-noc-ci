@@ -13,8 +13,8 @@ const september = parseRosterCsv(readFileSync(new URL("./fixtures/september-2026
 const history = { key: "2026-09", dates: september.dates, codesById: september.codesById, source: "csv" };
 const calendars = [{ year: 2026, days: [] }];
 const leave = (ids, from, to) => ids.map((id) => ({ memberId: id, name: id, from, to, code: "C", kind: "Cuti", source: "test" }));
-// Only Addin can work nights 13-16 Oct: four nights in a row, the maximum is three.
-const fourNightsAlone = () => makeConfig({ year: 2026, month: 10, requests: leave(["rizky", "willy", "arman"], "2026-10-13", "2026-10-16") });
+// Only Agus can work nights 13-16 Oct: four nights in a row, the maximum is three.
+const fourNightsAlone = () => makeConfig({ year: 2026, month: 10, requests: leave(["rudi", "wawan", "ardi"], "2026-10-13", "2026-10-16") });
 
 test("Shift 3 coverage proof: one person for four nights in a row is impossible, found at once and explained", () => {
   const started = Date.now();
@@ -22,32 +22,32 @@ test("Shift 3 coverage proof: one person for four nights in a row is impossible,
   assert.ok(Date.now() - started < 2000, "a quick check");
   assert.equal(check.ok, false);
   assert.equal(check.date, "2026-10-16", "the fourth night");
-  assert.match(check.reason, /Addin/);
+  assert.match(check.reason, /Agus/);
   assert.match(check.reason, /paling banyak 3 malam/);
 });
 
 test("coverage proof also counts the day shifts: whoever is on nights or resting after them cannot work days", () => {
-  // Addin and Willy away, Hilvani sick 18-19: on 18 or 19 Oct, one of Rizky/Arman is on nights and
-  // the other has just finished his, so Pavitasari would be alone for Shift 1 and Shift 2.
+  // Agus and Wawan away, Hana sick 18-19: on 18 or 19 Oct, one of Rudi/Ardi is on nights and
+  // the other has just finished his, so Putri would be alone for Shift 1 and Shift 2.
   const requests = [
-    ...leave(["addin"], "2026-10-09", "2026-10-20"), ...leave(["willy"], "2026-10-16", "2026-10-20"),
-    { memberId: "hilvani", name: "Hilvani", from: "2026-10-18", to: "2026-10-19", code: "S", kind: "Sakit", source: "test" }
+    ...leave(["agus"], "2026-10-09", "2026-10-20"), ...leave(["wawan"], "2026-10-16", "2026-10-20"),
+    { memberId: "hana", name: "Hana", from: "2026-10-18", to: "2026-10-19", code: "S", kind: "Sakit", source: "test" }
   ];
   const check = nightCoverageCheck(prepareMonth({ config: makeConfig({ year: 2026, month: 10, requests }), calendars, history }).input);
   assert.equal(check.ok, false);
   assert.ok(["2026-10-18", "2026-10-19"].includes(check.date), check.date);
   assert.match(check.reason, /Shift 1 dan Shift 2/);
-  assert.match(check.reason, /Pavitasari/);
+  assert.match(check.reason, /Putri/);
 });
 
 test("Shift 3 coverage proof stays quiet when nights can be shared, also with only two men left", () => {
   assert.equal(nightCoverageCheck(prepareMonth({ config: makeConfig({ year: 2026, month: 10 }), calendars, history }).input).ok, true);
-  const twoMen = DEFAULT_TEAM.map((member) => (["arman", "addin"].includes(member.id) ? { ...member, activeUntil: "2026-10-15" } : member));
+  const twoMen = DEFAULT_TEAM.map((member) => (["ardi", "agus"].includes(member.id) ? { ...member, activeUntil: "2026-10-15" } : member));
   assert.equal(nightCoverageCheck(prepareMonth({ config: makeConfig({ year: 2026, month: 10, team: twoMen }), calendars, history }).input).ok, true);
 });
 
 test("the complete search finds a valid roster in a very tight month (two men for every night of the second half)", () => {
-  const twoMen = DEFAULT_TEAM.map((member) => (["arman", "addin"].includes(member.id) ? { ...member, activeUntil: "2026-10-15" } : member));
+  const twoMen = DEFAULT_TEAM.map((member) => (["ardi", "agus"].includes(member.id) ? { ...member, activeUntil: "2026-10-15" } : member));
   const config = makeConfig({ year: 2026, month: 10, team: twoMen });
   const { input } = prepareMonth({ config, calendars, history });
   const found = exhaustiveSearch(input, { budgetMs: 60_000 });
@@ -63,7 +63,7 @@ test("a month that cannot be made says so plainly and at once: it was checked, w
     assert.equal(error.name, "RosterError");
     assert.match(error.message, /sudah dipastikan/);
     assert.match(error.message, /16 Oktober 2026/);
-    assert.match(error.message, /Addin/);
+    assert.match(error.message, /Agus/);
     assert.equal(error.details.date, "2026-10-16");
     return true;
   });
@@ -71,12 +71,12 @@ test("a month that cannot be made says so plainly and at once: it was checked, w
 });
 
 test("a month the normal search misses (it dead-ends) is still made: the complete search finds a valid roster", { timeout: 600_000 }, async () => {
-  // A tight last week from the random study of 5 Oct: Arman away 20-26, Addin no nights 21-25, Rizky away 21-23.
+  // A tight last week from the random study of 5 Oct: Ardi away 20-26, Agus no nights 21-25, Rudi away 21-23.
   const ask = (memberId, code, from, to) => ({ memberId, name: memberId, from, to, code, kind: code, source: "test" });
   const requests = [
-    ask("arman", "C", "2026-10-20", "2026-10-21"), ask("addin", "!3", "2026-10-21", "2026-10-25"), ask("arman", "T", "2026-10-22", "2026-10-24"),
-    ask("rizky", "T", "2026-10-21", "2026-10-22"), ask("arman", "T", "2026-10-26", "2026-10-26"), ask("willy", "!3", "2026-10-15", "2026-10-17"),
-    ask("willy", "!3", "2026-10-06", "2026-10-06"), ask("rizky", "C", "2026-10-23", "2026-10-23"), ask("rizky", "T", "2026-10-09", "2026-10-10")
+    ask("ardi", "C", "2026-10-20", "2026-10-21"), ask("agus", "!3", "2026-10-21", "2026-10-25"), ask("ardi", "T", "2026-10-22", "2026-10-24"),
+    ask("rudi", "T", "2026-10-21", "2026-10-22"), ask("ardi", "T", "2026-10-26", "2026-10-26"), ask("wawan", "!3", "2026-10-15", "2026-10-17"),
+    ask("wawan", "!3", "2026-10-06", "2026-10-06"), ask("rudi", "C", "2026-10-23", "2026-10-23"), ask("rudi", "T", "2026-10-09", "2026-10-10")
   ];
   const config = makeConfig({ year: 2026, month: 10, requests, search: { beamWidth: 1500 } });
   assert.throws(() => runBeamSearch(prepareMonth({ config, calendars, history }).input), /tidak bisa disusun/, "precondition: the normal search alone dead-ends");
@@ -87,10 +87,10 @@ test("a month the normal search misses (it dead-ends) is still made: the complet
 });
 
 test("leave, training or requested shifts that by themselves exceed the work-day limit are named at once (no search needed)", async () => {
-  const requests = [{ memberId: "willy", name: "Willy", from: "2026-10-17", to: "2026-10-22", code: "T", kind: "Training/Dinas", source: "test" }];
+  const requests = [{ memberId: "wawan", name: "Wawan", from: "2026-10-17", to: "2026-10-22", code: "T", kind: "Training/Dinas", source: "test" }];
   const started = Date.now();
   await assert.rejects(generateRoster({ config: makeConfig({ year: 2026, month: 10, requests }), calendars, history }), (error) => {
-    assert.match(error.message, /Willy/);
+    assert.match(error.message, /Wawan/);
     assert.match(error.message, /6 hari/);
     assert.match(error.message, /maksimal 5 hari kerja berturut-turut/);
     assert.equal(error.details.date, "2026-10-22");
@@ -105,9 +105,9 @@ const request = (memberId, code, from, to = from) => ({ memberId, name: memberId
 test("one person's own requests that cannot all be met are named at once, with the rule and the dates", async () => {
   for (const [first, second, rule] of [["2", "1", /istirahat|mundur/], ["3", "1", /Shift 3/]]) {
     const started = Date.now();
-    const requests = [request("willy", first, "2026-10-14"), request("willy", second, "2026-10-15")];
+    const requests = [request("wawan", first, "2026-10-14"), request("wawan", second, "2026-10-15")];
     await assert.rejects(generateRoster({ config: makeConfig({ year: 2026, month: 10, requests }), calendars, history }), (error) => {
-      assert.match(error.message, /Willy/);
+      assert.match(error.message, /Wawan/);
       assert.match(error.message, /14 Okt/);
       assert.match(error.message, /15 Okt/);
       assert.match(error.message, rule);
@@ -123,7 +123,7 @@ test("when a month cannot be made, the admin gets concrete ways out that the pro
   await assert.rejects(generateRoster({ config: fourNightsAlone(), calendars, history }), (error) => {
     assert.match(error.message, /Yang bisa dilakukan/);
     assert.ok(error.details.suggestions.length >= 1, error.message);
-    assert.ok(error.details.suggestions.some((text) => /cuti (Rizky|Willy|Arman)/.test(text)), error.details.suggestions.join("\n"));
+    assert.ok(error.details.suggestions.some((text) => /cuti (Rudi|Wawan|Ardi)/.test(text)), error.details.suggestions.join("\n"));
     assert.ok(error.details.suggestions.some((text) => /orang luar tim/.test(text) && /Shift 3/.test(text)), error.details.suggestions.join("\n"));
     return true;
   });

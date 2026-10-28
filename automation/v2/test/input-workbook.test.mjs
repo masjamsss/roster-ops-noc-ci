@@ -51,25 +51,25 @@ test("a new workbook reads back as the current team, staffing and rules", async 
 test("leave rows become requests; the example row above the table is ignored", async () => {
   const file = await freshWorkbook();
   await edit(file, (workbook) => {
-    addRequest(workbook, 0, ["addin", "2026-11-16", "2026-11-18", "Cuti", "Cuti tahunan"]);
-    addRequest(workbook, 1, ["Willy", "2026-11-09", null, "Training/Dinas"]);
-    addRequest(workbook, 2, ["Hilvani", "2026-11-20", "2026-11-20", "Minta Shift 1"]);
+    addRequest(workbook, 0, ["agus", "2026-11-16", "2026-11-18", "Cuti", "Cuti tahunan"]);
+    addRequest(workbook, 1, ["Wawan", "2026-11-09", null, "Training/Dinas"]);
+    addRequest(workbook, 2, ["Hana", "2026-11-20", "2026-11-20", "Minta Shift 1"]);
   });
   const { requests } = await readInputWorkbook(file);
   assert.deepEqual(requests.map((request) => [request.memberId, request.from, request.to, request.code]), [
-    ["addin", "2026-11-16", "2026-11-18", "C"],
-    ["willy", "2026-11-09", "2026-11-09", "T"],
-    ["hilvani", "2026-11-20", "2026-11-20", "1"]
+    ["agus", "2026-11-16", "2026-11-18", "C"],
+    ["wawan", "2026-11-09", "2026-11-09", "T"],
+    ["hana", "2026-11-20", "2026-11-20", "1"]
   ]);
   assert.match(requests[0].source, /Cuti & Permintaan" baris 6/);
 });
 
 test("mistakes in the leave sheet name the sheet, row and problem", async () => {
   const cases = [
-    [["Adin", "2026-11-16", "2026-11-18", "Cuti"], /baris 6: nama "Adin" tidak ada di sheet Anggota/],
-    [["Addin", "2026-11-18", "2026-11-16", "Cuti"], /baris 6: tanggal selesai .* sebelum tanggal mulai/],
-    [["Addin", null, null, "Cuti"], /baris 6: tanggal mulai kosong/],
-    [["Addin", "2026-11-16", "2026-11-18", "Liburan"], /baris 6: jenis "Liburan" tidak dikenal/]
+    [["Agos", "2026-11-16", "2026-11-18", "Cuti"], /baris 6: nama "Agos" tidak ada di sheet Anggota/],
+    [["Agus", "2026-11-18", "2026-11-16", "Cuti"], /baris 6: tanggal selesai .* sebelum tanggal mulai/],
+    [["Agus", null, null, "Cuti"], /baris 6: tanggal mulai kosong/],
+    [["Agus", "2026-11-16", "2026-11-18", "Liburan"], /baris 6: jenis "Liburan" tidak dikenal/]
   ];
   for (const [values, message] of cases) {
     const file = await freshWorkbook();
@@ -78,8 +78,8 @@ test("mistakes in the leave sheet name the sheet, row and problem", async () => 
   }
   const clash = await freshWorkbook();
   await edit(clash, (workbook) => {
-    addRequest(workbook, 0, ["Addin", "2026-11-16", "2026-11-18", "Cuti"]);
-    addRequest(workbook, 1, ["Addin", "2026-11-18", "2026-11-18", "Minta Shift 1"]);
+    addRequest(workbook, 0, ["Agus", "2026-11-16", "2026-11-18", "Cuti"]);
+    addRequest(workbook, 1, ["Agus", "2026-11-18", "2026-11-18", "Minta Shift 1"]);
   });
   await assert.rejects(readInputWorkbook(clash), /baris 7: bentrok dengan baris 6/);
 });
@@ -88,8 +88,8 @@ test("members: exit date, newcomer without ID, and no allowed shift", async () =
   const file = await freshWorkbook();
   await edit(file, (workbook) => {
     const sheet = workbook.getWorksheet(INPUT_LAYOUT.members.sheet);
-    const willy = sheet.getRow(INPUT_LAYOUT.members.firstRow + 3);
-    willy.getCell(9).value = date("2026-10-15");
+    const wawan = sheet.getRow(INPUT_LAYOUT.members.firstRow + 3);
+    wawan.getCell(9).value = date("2026-10-15");
     const newcomer = sheet.getRow(INPUT_LAYOUT.members.firstRow + 6);
     newcomer.getCell(2).value = "Budi Santoso";
     newcomer.getCell(4).value = "L";
@@ -97,7 +97,7 @@ test("members: exit date, newcomer without ID, and no allowed shift", async () =
     newcomer.getCell(8).value = date("2026-11-01");
   });
   const { members } = await readInputWorkbook(file);
-  assert.equal(members.find((member) => member.id === "willy").activeUntil, "2026-10-15");
+  assert.equal(members.find((member) => member.id === "wawan").activeUntil, "2026-10-15");
   const budi = members.find((member) => member.name === "Budi Santoso");
   assert.equal(budi.id, "budi-santoso");
   assert.equal(budi.activeFrom, "2026-11-01");
@@ -107,7 +107,7 @@ test("members: exit date, newcomer without ID, and no allowed shift", async () =
     const row = workbook.getWorksheet(INPUT_LAYOUT.members.sheet).getRow(INPUT_LAYOUT.members.firstRow);
     for (const column of [5, 6, 7]) row.getCell(column).value = "Tidak";
   });
-  await assert.rejects(readInputWorkbook(none), /Hilvani tidak boleh shift apa pun/);
+  await assert.rejects(readInputWorkbook(none), /Hana tidak boleh shift apa pun/);
 });
 
 test("the Friday prayer rule is a Ya/Tidak row; workbooks made before it still read", async () => {
@@ -140,11 +140,11 @@ test("rules outside their allowed range are rejected", async () => {
 
 test("appendRequest adds a validated row, and rejects a bad one without changing the file", async () => {
   const file = await freshWorkbook();
-  const added = await appendRequest(file, { name: "addin", from: "2026-11-16", to: "2026-11-18", kind: "Cuti", note: "Cuti tahunan" });
+  const added = await appendRequest(file, { name: "agus", from: "2026-11-16", to: "2026-11-18", kind: "Cuti", note: "Cuti tahunan" });
   assert.equal(added.row, INPUT_LAYOUT.requests.firstRow);
   const { requests } = await readInputWorkbook(file);
-  assert.deepEqual(requests.map((request) => [request.name, request.from, request.to, request.code]), [["Addin", "2026-11-16", "2026-11-18", "C"]]);
-  await assert.rejects(appendRequest(file, { name: "Adin", from: "2026-11-20", to: "2026-11-20", kind: "Cuti" }), /"Adin" tidak ada/);
+  assert.deepEqual(requests.map((request) => [request.name, request.from, request.to, request.code]), [["Agus", "2026-11-16", "2026-11-18", "C"]]);
+  await assert.rejects(appendRequest(file, { name: "Agos", from: "2026-11-20", to: "2026-11-20", kind: "Cuti" }), /"Agos" tidak ada/);
   assert.equal((await readInputWorkbook(file)).requests.length, 1, "the bad row was not kept");
 });
 
@@ -153,15 +153,15 @@ test("buildConfig keeps only members active in the month and maps requests", asy
   await edit(file, (workbook) => {
     const sheet = workbook.getWorksheet(INPUT_LAYOUT.members.sheet);
     sheet.getRow(INPUT_LAYOUT.members.firstRow + 3).getCell(9).value = date("2026-09-30");
-    addRequest(workbook, 0, ["Addin", "2026-10-16", "2026-10-18", "Cuti"]);
-    addRequest(workbook, 1, ["Addin", "2026-12-01", "2026-12-02", "Cuti"]);
+    addRequest(workbook, 0, ["Agus", "2026-10-16", "2026-10-18", "Cuti"]);
+    addRequest(workbook, 1, ["Agus", "2026-12-01", "2026-12-02", "Cuti"]);
   });
   const config = buildConfig({ input: await readInputWorkbook(file), advanced: {}, monthKey: "2026-10" });
-  assert.deepEqual(config.members.map((member) => member.id), ["hilvani", "pavitasari", "rizky", "arman", "addin"]);
+  assert.deepEqual(config.members.map((member) => member.id), ["hana", "putri", "rudi", "ardi", "agus"]);
   assert.equal(config.period.year, 2026);
   assert.equal(config.period.month, 10);
   assert.equal(config.requests.length, 2, "rows outside the month stay; the engine ignores dates outside its horizon");
-  assert.equal(config.members.find((member) => member.id === "hilvani").dayOnly, true);
+  assert.equal(config.members.find((member) => member.id === "hana").dayOnly, true);
 });
 
 test("the overtime row for the backup plan: 4 hours by default, the admin's value is used, older workbooks still read", async () => {
@@ -349,4 +349,73 @@ test("the Aturan sheet has the daily hours limit for the HR overtime summary (8 
   assert.deepEqual(workbook.getWorksheet(INPUT_LAYOUT.rules.sheet).getCell(row, 2).dataValidation.formulae, [6, 12]);
   await edit(file, (book) => (book.getWorksheet(INPUT_LAYOUT.rules.sheet).getCell(ruleRow(book, "Batas jam kerja bersih per hari"), 2).value = 7));
   assert.equal((await readInputWorkbook(file)).rules.dailyHoursLimit, 7, "the 6-day scheme");
+});
+
+test("Dispensasi Shift 1/2/3 (user, 28 Oct): an approved exemption for any reason, told apart from Hindari", async () => {
+  const file = await freshWorkbook();
+  await edit(file, (workbook) => {
+    addRequest(workbook, 0, ["Rudi", "2026-11-16", "2026-11-30", "Dispensasi Shift 3", "Pelatihan K3"]);
+    addRequest(workbook, 1, ["Wawan", "2026-11-10", "2026-11-10", "Hindari Shift 3", "Kuliah malam"]);
+    addRequest(workbook, 2, ["Rudi", "2026-11-16", "2026-11-20", "Dispensasi Shift 1", "Kursus pagi"]);
+  });
+  const { requests } = await readInputWorkbook(file);
+  // The same rule for the roster (not that shift on those days), but only Dispensasi is excused.
+  assert.deepEqual(requests.map((request) => [request.name, request.code, request.kind, request.dispensation === true]), [
+    ["Rudi", "!3", "Dispensasi Shift 3", true],
+    ["Wawan", "!3", "Hindari Shift 3", false],
+    ["Rudi", "!1", "Dispensasi Shift 1", true]
+  ]);
+});
+
+test("a Dispensasi needs its reason in Keterangan, so the OM sees why", async () => {
+  const file = await freshWorkbook();
+  await edit(file, (workbook) => addRequest(workbook, 0, ["Rudi", "2026-11-16", "2026-11-30", "Dispensasi Shift 3"]));
+  await assert.rejects(readInputWorkbook(file), /baris 6: Dispensasi perlu alasan di kolom Keterangan/);
+});
+
+test("appendRequest keeps Dispensasi and Hindari apart, and refuses a Dispensasi without a reason", async () => {
+  const file = await freshWorkbook();
+  await appendRequest(file, { name: "Rudi", from: "2026-11-05", to: "2026-11-05", kind: "Dispensasi Shift 3", note: "Ujian sertifikasi CCNA" });
+  await appendRequest(file, { name: "Wawan", from: "2026-11-06", to: "2026-11-06", kind: "!3" });
+  const { requests } = await readInputWorkbook(file);
+  assert.deepEqual(requests.map((request) => [request.name, request.kind, request.dispensation === true]), [["Rudi", "Dispensasi Shift 3", true], ["Wawan", "Hindari Shift 3", false]]);
+  await assert.rejects(appendRequest(file, { name: "Ardi", from: "2026-11-07", to: "2026-11-07", kind: "Dispensasi Shift 2" }), /alasan/);
+  assert.equal((await readInputWorkbook(file)).requests.length, 2, "the row without a reason was not kept");
+});
+
+test("an older Data Roster gets the Dispensasi kinds in its 'Jenis' list", async () => {
+  const file = await freshWorkbook();
+  const OLD = '"Cuti,Sakit,Training/Dinas,Minta libur,Minta Shift 1,Minta Shift 2,Minta Shift 3,Hindari Shift 1,Hindari Shift 2,Hindari Shift 3"';
+  const kindCell = (workbook, offset) => workbook.getWorksheet(INPUT_LAYOUT.requests.sheet).getRow(INPUT_LAYOUT.requests.firstRow + offset).getCell(5);
+  await edit(file, (workbook) => {
+    for (let offset = 0; offset < INPUT_LAYOUT.requests.rows; offset += 1) kindCell(workbook, offset).dataValidation = { ...kindCell(workbook, offset).dataValidation, formulae: [OLD] };
+  });
+  const added = await upgradeInputWorkbook(file);
+  assert.ok(added.some((label) => /Dispensasi Shift 1, Dispensasi Shift 2, Dispensasi Shift 3/.test(label)), added.join(" | "));
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(file);
+  const list = kindCell(workbook, 0).dataValidation.formulae[0];
+  assert.match(list, /Hindari Shift 3,Dispensasi Shift 1,Dispensasi Shift 2,Dispensasi Shift 3/);
+  assert.ok(list.length <= 257, `Excel allows 255 characters in a list, got ${list.length - 2}`);
+});
+
+const NIGHT_SPLIT = "Seimbangkan Shift 1 dan Shift 2 untuk yang boleh Shift 3";
+
+test("the Aturan sheet has a row for a fair Shift 1 / Shift 2 split among the night workers (Ya by default), next to the day-only row", async () => {
+  const file = await freshWorkbook();
+  assert.equal((await readInputWorkbook(file)).rules.balanceNightWorkerDayShifts, true);
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(file);
+  assert.equal(ruleRow(workbook, NIGHT_SPLIT), ruleRow(workbook, "Seimbangkan Shift 1 dan Shift 2 untuk yang tidak boleh Shift 3") + 1);
+  assert.deepEqual(workbook.getWorksheet(INPUT_LAYOUT.rules.sheet).getCell(ruleRow(workbook, NIGHT_SPLIT), 2).dataValidation.formulae, ['"Ya,Tidak"']);
+  await edit(file, (book) => (book.getWorksheet(INPUT_LAYOUT.rules.sheet).getCell(ruleRow(book, NIGHT_SPLIT), 2).value = "Tidak"));
+  assert.equal((await readInputWorkbook(file)).rules.balanceNightWorkerDayShifts, false, "the admin can switch it off");
+});
+
+test("an older Data Roster.xlsx without the night workers' split row gets it added with Ya", async () => {
+  const file = await freshWorkbook();
+  await edit(file, (workbook) => workbook.getWorksheet(INPUT_LAYOUT.rules.sheet).spliceRows(ruleRow(workbook, NIGHT_SPLIT), 1));
+  assert.equal((await readInputWorkbook(file)).rules.balanceNightWorkerDayShifts, true, "an older workbook still reads, with the default");
+  assert.deepEqual(await upgradeInputWorkbook(file), [NIGHT_SPLIT]);
+  assert.equal((await readInputWorkbook(file)).rules.balanceNightWorkerDayShifts, true);
 });

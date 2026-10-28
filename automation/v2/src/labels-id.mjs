@@ -56,6 +56,23 @@ export function formatRentang(isoDates) {
 }
 
 // "1–3 Okt" for a start/end pair (inclusive).
+// Scattered dates (a Dispensasi on exam days): consecutive days as a range, the
+// month written once when all are in the same month: "5, 12–14 dan 20 Nov".
+export function formatDaftarTanggal(isoDates) {
+  const runs = [];
+  for (const iso of [...isoDates].sort()) {
+    const last = runs.at(-1);
+    if (last && parseIsoDate(iso).getTime() === parseIsoDate(last.at(-1)).getTime() + 86_400_000) last.push(iso);
+    else runs.push([iso]);
+  }
+  const sameMonth = runs.every((run) => run.every((iso) => iso.slice(0, 7) === runs[0][0].slice(0, 7)));
+  const parts = runs.map((run, index) => {
+    const text = formatRentang(run);
+    return sameMonth && index < runs.length - 1 ? text.replace(/ [A-Za-z]+$/, "") : text;
+  });
+  return daftarNama(parts);
+}
+
 export function formatPeriode(start, end) {
   if (start === end) return formatTanggal(start, { pendek: true });
   const dates = [];

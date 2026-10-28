@@ -25,8 +25,8 @@ const ctx = {
   },
   weights: WEIGHTS
 };
-const man = { id: "rizky", name: "Rizky", eligibleShifts: ["1", "2", "3"], dayOnly: false, activeFrom: null, activeUntil: null };
-const woman = { id: "hilvani", name: "Hilvani", eligibleShifts: ["1", "2"], dayOnly: true, activeFrom: null, activeUntil: null };
+const man = { id: "rudi", name: "Rudi", eligibleShifts: ["1", "2", "3"], dayOnly: false, activeFrom: null, activeUntil: null };
+const woman = { id: "hana", name: "Hana", eligibleShifts: ["1", "2"], dayOnly: true, activeFrom: null, activeUntil: null };
 
 function day(dayIndex) {
   const date = new Date(Date.UTC(2026, 9, 1 + dayIndex)).toISOString().slice(0, 10);
@@ -58,17 +58,17 @@ test("two off days are required after a night block before any work", () => {
 });
 
 test("night recovery also applies to a block that ended in the previous month", () => {
-  const armanHistory = ["H", "3", "3"];
-  assert.equal(run(man, ["1"], armanHistory).ok, false);
-  assert.equal(run(man, ["H", "1"], armanHistory).ok, false);
-  assert.equal(run(man, ["H", "H", "1"], armanHistory).ok, true);
+  const ardiHistory = ["H", "3", "3"];
+  assert.equal(run(man, ["1"], ardiHistory).ok, false);
+  assert.equal(run(man, ["H", "1"], ardiHistory).ok, false);
+  assert.equal(run(man, ["H", "H", "1"], ardiHistory).ok, true);
 });
 
 test("the 5-day limit counts days carried in from last month", () => {
-  const addinHistory = ["H", "H", "1", "2", "2", "2"];
-  assert.equal(run(man, ["3"], addinHistory).ok, true);
-  assert.equal(run(man, ["3", "3"], addinHistory).failedAt, 1);
-  const state = run(man, ["3"], addinHistory).state;
+  const agusHistory = ["H", "H", "1", "2", "2", "2"];
+  assert.equal(run(man, ["3"], agusHistory).ok, true);
+  assert.equal(run(man, ["3", "3"], agusHistory).failedAt, 1);
+  const state = run(man, ["3"], agusHistory).state;
   assert.match(explainTransition(state, man, "3", day(1), ctx), /5 hari berturut-turut/);
 });
 
@@ -233,11 +233,46 @@ test("a person's second 3-night block in the month costs more than their first, 
 });
 
 test("'Hindari Shift X' (avoid a shift on a date) is a hard rule; other shifts that day stay allowed", () => {
-  const avoidCtx = { ...ctx, avoid: { 1: { rizky: new Set(["3"]) } } };
+  const avoidCtx = { ...ctx, avoid: { 1: { rudi: new Set(["3"]) } } };
   let state = initialMemberState(deriveMemberState(["H", "H"], avoidCtx), man);
   state = transitionMember(state, man, "1", day(0), avoidCtx).state;
   assert.ok(transitionMember(state, man, "3", day(1), ctx), "without the request Shift 3 would be allowed");
   assert.equal(transitionMember(state, man, "3", day(1), avoidCtx), null, "no Shift 3 on the avoided day");
   assert.ok(transitionMember(state, man, "1", day(1), avoidCtx), "Shift 1 is still fine");
-  assert.match(explainTransition(state, man, "3", day(1), avoidCtx), /Rizky minta tidak Shift 3/);
+  assert.match(explainTransition(state, man, "3", day(1), avoidCtx), /Rudi minta tidak Shift 3/);
+});
+
+test("a Dispensasi Shift 3 day counts for the roster but not as a day available for nights; Hindari does (user, 28 Oct)", () => {
+  const today = [{ rudi: new Set(["3"]) }, {}];
+  const start = initialMemberState(deriveMemberState(["H", "H"], ctx), man);
+  const first = transitionMember(start, man, "1", day(0), { ...ctx, avoid: today, dispensation: today }).state;
+  assert.equal(first.availableDays, 1);
+  assert.equal(first.nightAvailableDays, 0);
+  assert.equal(transitionMember(first, man, "1", day(1), { ...ctx, avoid: today, dispensation: today }).state.nightAvailableDays, 1);
+  assert.equal(transitionMember(start, man, "1", day(0), { ...ctx, avoid: today }).state.nightAvailableDays, 1, "Hindari: still counted");
+});
+
+test("night workers' Shift 1 and Shift 2 days are counted for the fair split, unless switched off (user, 28 Oct)", () => {
+  const codes = ["1", "1", "H", "H", "2", "2", "3", "3", "H", "H", "1"];
+  assert.deepEqual([run(man, codes).state.s1Count, run(man, codes).state.s2Count], [3, 2], "nights do not count");
+  const off = { ...ctx, rules: { ...ctx.rules, balanceNightWorkerDayShifts: false } };
+  let state = initialMemberState(deriveMemberState(["H", "H"], off), man);
+  codes.forEach((code, index) => (state = transitionMember(state, man, code, day(index), off).state));
+  assert.deepEqual([state.s1Count, state.s2Count], [0, 0], "not tracked when off, so the search can merge more states");
+  const morningsAndNights = { ...man, id: "budi", name: "Budi", eligibleShifts: ["1", "3"] };
+  assert.equal(run(morningsAndNights, ["1", "1", "H", "H", "1"]).state.s1Count, 0, "only people who may work both day shifts");
+});
+
+test("a Dispensasi Shift 1 or Shift 2 day is left out of the Shift 1 / Shift 2 split, for night workers and day-only members (user, 28 Oct)", () => {
+  // Days 0-1: Dispensasi Shift 2 (they work Shift 1 instead); day 4: Dispensasi Shift 1.
+  const dispensation = (id) => [{ [id]: new Set(["2"]) }, { [id]: new Set(["2"]) }, {}, {}, { [id]: new Set(["1"]) }];
+  const counts = (member, codes) => {
+    const excused = { ...ctx, dispensation: dispensation(member.id) };
+    let state = initialMemberState(deriveMemberState(["H", "H"], excused), member);
+    codes.forEach((code, index) => (state = transitionMember(state, member, code, day(index), excused).state));
+    return [state.s1Count, state.s2Count];
+  };
+  assert.deepEqual(counts(man, ["1", "1", "H", "H", "2", "2"]), [0, 1], "only day 5 counts");
+  assert.deepEqual(counts(woman, ["1", "1", "H", "H", "2", "2"]), [0, 1]);
+  assert.deepEqual(run(woman, ["1", "1", "H", "H", "2", "2"]).state.s1Count, 2, "without a Dispensasi every day counts");
 });

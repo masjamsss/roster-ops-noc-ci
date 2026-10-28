@@ -9,7 +9,7 @@ import path from "node:path";
 import { addMonths, eachDate, monthBounds, parseMonthKey } from "./date-utils.mjs";
 import { RosterError, explainFileError } from "./errors.mjs";
 import { readRosterWorkbook } from "./excel-read.mjs";
-import { rollingStats } from "./history.mjs";
+import { dispensationDates, rollingStats } from "./history.mjs";
 import { namaBulan } from "./labels-id.mjs";
 import { parseRosterCsv } from "./roster-csv.mjs";
 
@@ -130,7 +130,9 @@ export async function loadMonthCodes(paths, key) {
 }
 
 // History for generating `key`: the previous month's real codes (+ fairness stats of up to 3 months).
-export async function buildHistory(paths, key, { statsMonths = 2 } = {}) {
+// `requests` (Data Roster.xlsx) and each month's own saved requests give the
+// Dispensasi Shift 3 days, which are no night debt (user, 28 Oct).
+export async function buildHistory(paths, key, { statsMonths = 2, requests = [] } = {}) {
   const previousKey = addMonths(key, -1);
   const previous = await loadMonthCodes(paths, previousKey);
   if (!previous) {
@@ -150,7 +152,8 @@ export async function buildHistory(paths, key, { statsMonths = 2 } = {}) {
     if (older) months.push(older);
   }
   const memberIds = [...new Set(months.flatMap((item) => Object.keys(item.codesById)))];
-  const stats = rollingStats(months.map((item) => ({ key: item.key, dates: item.dates, codesById: item.codesById })), memberIds, ["1", "2", "3"]);
+  const dispensations = [...months.flatMap((item) => item.result?.requests ?? []), ...requests].filter((request) => request.dispensation);
+  const stats = rollingStats(months.map((item) => ({ key: item.key, dates: item.dates, codesById: item.codesById })), memberIds, ["1", "2", "3"], "3", 3, { noNight: dispensationDates(dispensations, "3") });
   return {
     key: previousKey,
     source: previous.source,
@@ -160,7 +163,8 @@ export async function buildHistory(paths, key, { statsMonths = 2 } = {}) {
     names: previous.names,
     manualChanges: previous.manualChanges,
     notes: previous.notes,
-    stats
+    stats,
+    dispensations
   };
 }
 

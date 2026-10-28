@@ -33,7 +33,9 @@ function subtract(range, covers) {
   return open;
 }
 
-export function overtimeCover({ dayIndex, shiftId, timeline, members, shifts, minimumRestHours, overtimeHours }) {
+// `excluded`: ids of people who must not work this shift that day (Hindari or
+// Dispensasi), so they are not asked to cover its hours with overtime either.
+export function overtimeCover({ dayIndex, shiftId, timeline, members, shifts, minimumRestHours, overtimeHours, excluded = new Set() }) {
   const shiftById = new Map(shifts.map((shift) => [shift.id, shift]));
   const onShift = members.filter((member) => timeline[member.id]?.[dayIndex] === shiftId);
   const people = onShift.map((member) => member.name);
@@ -48,7 +50,7 @@ export function overtimeCover({ dayIndex, shiftId, timeline, members, shifts, mi
 
   // Only people allowed to work the missing shift cover its hours (e.g. no
   // night hours for someone who may not work Shift 3).
-  const allowed = (member) => !member.eligibleShifts || member.eligibleShifts.includes(shiftId);
+  const allowed = (member) => (!member.eligibleShifts || member.eligibleShifts.includes(shiftId)) && !excluded.has(member.id);
   let extension = null;
   let early = null;
   for (const member of others.filter(allowed)) {

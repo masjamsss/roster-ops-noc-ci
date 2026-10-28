@@ -3,6 +3,7 @@
 // the search and the local improvement always optimize the same thing.
 import { parseClock, weekdayIndex } from "./date-utils.mjs";
 import { transitionMember } from "./rules.mjs";
+import { countsForShift2Share, fairShift2, shift2Totals } from "./shift-share.mjs";
 import { staffingPenalty } from "./staffing.mjs";
 
 const UNAVAILABLE = new Set(["-", "C", "S", "T"]);
@@ -28,22 +29,27 @@ const EXCUSED = new Set(["C", "S", "T"]);
 // 5 workdays per week (22 in a 31-day month): the same number a clean
 // 5-on-2-off rhythm gives. A number in the Aturan sheet fixes it instead.
 // Either way, every cuti, sakit or training day lowers the target by one.
-export function makeEnv(config, days, members = [], fixed = []) {
+// `dispensation[dayIndex][memberId]`: shifts excused by a Dispensasi; the
+// night-rosterable days leave out Dispensasi Shift 3 days (user, 28 Oct).
+export function makeEnv(config, days, members = [], fixed = [], dispensation = []) {
   const published = days.filter((day) => day.published);
   const publishedCount = published.length;
   const numeric = typeof config.rules.workDaysTarget === "number";
   const sum = (counts) => Object.values(counts).reduce((total, value) => total + value, 0);
   const need = published.reduce((total, day) => total + sum(day.isSpecial ? config.coverage.special.preferred : config.coverage.weekday.preferred), 0);
+  const nightId = config.shifts.find((shift) => shift.night)?.id;
   const memberTargets = members.map((member) => {
     let activeDays = 0;
     let excused = 0;
+    let noNight = 0;
     for (const day of published) {
       const code = fixed[day.dayIndex]?.[member.id];
       if (code === "-") continue;
       activeDays += 1;
       if (EXCUSED.has(code)) excused += 1;
+      else if (code !== nightId && dispensation[day.dayIndex]?.[member.id]?.has(nightId)) noNight += 1;
     }
-    return { activeDays, excused, rosterable: activeDays - excused };
+    return { activeDays, excused, rosterable: activeDays - excused, nightRosterable: activeDays - excused - noNight };
   });
   const team = memberTargets.reduce((total, goal) => total + goal.activeDays / Math.max(1, publishedCount), 0);
   const share = need / Math.max(1, team);
@@ -104,14 +110,14 @@ export function fairnessOffsets(members, stats) {
     });
   };
   return {
-    nights: offsets((stat) => stat.nightDays, (stat) => stat.availableDays ?? 0, (member) => !member.dayOnly),
+    nights: offsets((stat) => stat.nightDays, (stat) => stat.nightAvailableDays ?? stat.availableDays ?? 0, (member) => !member.dayOnly),
     weekends: offsets((stat) => stat.weekendDays, (stat) => stat.availableWeekendDays ?? 0, () => true),
-    longBlocks: offsets((stat) => stat.longNightBlocks ?? 0, (stat) => stat.availableDays ?? 0, (member) => !member.dayOnly)
+    longBlocks: offsets((stat) => stat.longNightBlocks ?? 0, (stat) => stat.nightAvailableDays ?? stat.availableDays ?? 0, (member) => !member.dayOnly)
   };
 }
 
 function targetOf(env, index) {
-  return env.memberTargets?.[index] ?? { target: env.target, base: env.target, activeDays: env.publishedCount, excused: 0, rosterable: env.publishedCount };
+  return env.memberTargets?.[index] ?? { target: env.target, base: env.target, activeDays: env.publishedCount, excused: 0, rosterable: env.publishedCount, nightRosterable: env.publishedCount };
 }
 
 // Displayed per-person target: the month's target for the days in the team,
@@ -155,7 +161,15 @@ export function dayScore(codes, day, states, members, config, env) {
   if (day.isWeekend) score += (weights.weekendSpreadDaily ?? 0) * spread(states, (state, index) => state.weekendWorkCount - weekendOffset(index) * elapsed, seen(5));
   // Nights per available day so far, so someone back from leave or sickness is
   // not pushed to catch up in the rest of the month.
-  score += (weights.nightSpreadDaily ?? 0) * spread(states, (state, index) => (state.nightCount * daysSoFar) / Math.max(1, state.availableDays) - nightOffset(index) * elapsed, (index) => !members[index].dayOnly && seen(5)(index));
+  // Dispensasi Shift 3 days are not night-available days (user, 28 Oct).
+  score += (weights.nightSpreadDaily ?? 0) * spread(states, (state, index) => (state.nightCount * daysSoFar) / Math.max(1, state.nightAvailableDays ?? state.availableDays) - nightOffset(index) * elapsed, (index) => !members[index].dayOnly && (states[index].nightAvailableDays ?? states[index].availableDays) + states[index].excusedCount >= 5);
+  // Night workers' Shift 2 days near their fair share so far (shift-share.mjs),
+  // with 2 days of slack between the most and least (a block of Shift 2 days is
+  // normal mid-month).
+  const balanceShares = config.rules.balanceNightWorkerDayShifts !== false;
+  if (balanceShares && weights.nightWorkerDayShiftDaily) {
+    score += weights.nightWorkerDayShiftDaily * Math.max(0, shift2Gap(states, members, seen(5)) - 2);
+  }
   if (env.mode === "fixed") {
     // Keep everyone on pace for the monthly target, with 1.5 days of slack
     // either way (the natural swing of a 5-on-2-off rhythm).
@@ -177,24 +191,71 @@ export function dayScore(codes, day, states, members, config, env) {
     }
     const perActive = (count, index) => (count * env.publishedCount) / Math.max(1, targetOf(env, index).activeDays);
     const perRosterable = (count, index) => (count * env.publishedCount) / Math.max(1, targetOf(env, index).rosterable);
+    const perNightRosterable = (count, index) => (count * env.publishedCount) / Math.max(1, targetOf(env, index).nightRosterable ?? targetOf(env, index).rosterable);
     const mostlyActive = (index) => targetOf(env, index).activeDays >= 10;
     const mostlyRosterable = (index) => targetOf(env, index).rosterable >= 10;
+    const mostlyNightRosterable = (index) => (targetOf(env, index).nightRosterable ?? targetOf(env, index).rosterable) >= 10;
     const work = spread(states, (state, index) => perActive(state.workCount + state.excusedCount, index), mostlyActive);
     const tolerance = weights.workloadSpreadTolerance ?? 1;
     score += weights.workloadSpreadLight * Math.min(work, tolerance) + weights.workloadSpreadHeavy * Math.max(0, work - tolerance);
     score += weights.weekendSpread * spread(states, (state, index) => perRosterable(state.weekendWorkCount, index) - weekendOffset(index), mostlyRosterable);
-    const nights = spread(states, (state, index) => perRosterable(state.nightCount, index) - nightOffset(index), (index) => mostlyRosterable(index) && !members[index].dayOnly);
+    const nights = spread(states, (state, index) => perNightRosterable(state.nightCount, index) - nightOffset(index), (index) => mostlyNightRosterable(index) && !members[index].dayOnly);
     score += (weights.nightSpreadLight ?? 0) * Math.min(nights, 2) + (weights.nightSpreadHeavy ?? 0) * Math.max(0, nights - 2);
     // 3-night blocks per available day, balanced over three months like nights.
     const longOffset = (index) => env.longBlockOffset?.[index] ?? 0;
-    score += (weights.longNightBlockSpread ?? 0) * spread(states, (state, index) => perRosterable(state.longNightBlocks ?? 0, index) - longOffset(index), (index) => mostlyRosterable(index) && !members[index].dayOnly);
+    score += (weights.longNightBlockSpread ?? 0) * spread(states, (state, index) => perNightRosterable(state.longNightBlocks ?? 0, index) - longOffset(index), (index) => mostlyNightRosterable(index) && !members[index].dayOnly);
     members.forEach((member, index) => {
       if (!member.dayOnly || !config.rules.balanceDayOnlyShifts) return;
       const drift = Math.abs(states[index].s1Count - states[index].s2Count);
       if (drift > 1) score += weights.dayShiftImbalanceFinal * (drift - 1);
     });
+    // Night workers present most of the month (as in the quality review): each
+    // Shift 2 day beyond 1 from the fair share.
+    if (balanceShares && weights.nightWorkerDayShiftFinal) {
+      const counted = shareRows(states, members, (index) => targetOf(env, index).rosterable >= env.publishedCount / 2);
+      if (counted.length > 1) {
+        const totals = shift2Totals(counted);
+        for (const row of counted) {
+          const off = Math.abs(row.s2 - fairShift2(row, totals));
+          if (off > 1) score += weights.nightWorkerDayShiftFinal * (off - 1);
+        }
+      }
+    }
   }
   return score;
+}
+
+function shareRows(states, members, include) {
+  const rows = [];
+  for (let index = 0; index < states.length; index += 1) {
+    if (countsForShift2Share(members[index]) && include(index)) rows.push({ s1: states[index].s1Count, s2: states[index].s2Count });
+  }
+  return rows;
+}
+
+// Most minus least Shift 2 days above the fair share, among the night workers
+// counted so far. Runs for every candidate of the search, so no arrays.
+function shift2Gap(states, members, include) {
+  let counted = 0;
+  let shift2 = 0;
+  let dayShifts = 0;
+  for (let index = 0; index < states.length; index += 1) {
+    if (!countsForShift2Share(members[index]) || !include(index)) continue;
+    counted += 1;
+    shift2 += states[index].s2Count;
+    dayShifts += states[index].s1Count + states[index].s2Count;
+  }
+  if (counted < 2 || dayShifts === 0) return 0;
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  for (let index = 0; index < states.length; index += 1) {
+    if (!countsForShift2Share(members[index]) || !include(index)) continue;
+    const state = states[index];
+    const off = state.s2Count - ((state.s1Count + state.s2Count) * shift2) / dayShifts;
+    if (off < min) min = off;
+    if (off > max) max = off;
+  }
+  return max - min;
 }
 
 // codes[memberIndex][dayIndex]; fixed[dayIndex] = { memberId: requestedCode }.

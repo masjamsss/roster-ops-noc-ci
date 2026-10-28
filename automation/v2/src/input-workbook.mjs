@@ -27,8 +27,16 @@ export const REQUEST_KINDS = Object.freeze([
   // class, a morning appointment). Several may cover the same day.
   ["Hindari Shift 1", "!1"],
   ["Hindari Shift 2", "!2"],
-  ["Hindari Shift 3", "!3"]
+  ["Hindari Shift 3", "!3"],
+  // Dispensasi (user, 28 Oct): the same rule as Hindari, but an approved
+  // exemption for any reason (medical recovery, certification, training, study),
+  // with the reason required. Those days are not counted in the Shift 3 share,
+  // so nobody makes them up later; Hindari days are counted.
+  ["Dispensasi Shift 1", "!1"],
+  ["Dispensasi Shift 2", "!2"],
+  ["Dispensasi Shift 3", "!3"]
 ]);
+export const DISPENSATION_KINDS = new Set(["Dispensasi Shift 1", "Dispensasi Shift 2", "Dispensasi Shift 3"]);
 
 const RULE_ROWS = Object.freeze([
   { key: "maxConsecutiveWorkDays", label: "Maksimal hari kerja berturut-turut", min: 3, max: 7, explain: "Termasuk sambungan dari bulan sebelumnya. Training/dinas dihitung hari kerja." },
@@ -40,6 +48,7 @@ const RULE_ROWS = Object.freeze([
   { key: "workDaysTarget", label: "Target hari kerja per orang per bulan", kind: "auto", min: 15, max: 26, explain: "\"Otomatis\" = pekerjaan ideal bulan itu (2-2-1 di hari kerja, 1-1-1 di Sabtu/Minggu/tanggal merah) dibagi rata ke semua anggota, maksimal 5 hari kerja per minggu: 22 hari di bulan 31 hari, 21 di bulan 30 hari, 20 di Februari. Cuti, sakit dan training mengurangi target orang itu 1:1. Isi angka (misalnya 21) bila ada target tetap." },
   { key: "workDaysTargetHoursCap", label: "Target hari kerja yang boleh Shift 3 mengikuti batas jam per minggu", kind: "yesno", optional: true, explain: "Tidak = semua orang targetnya sama (misalnya 22 hari). Ya = target orang yang boleh Shift 3 diturunkan supaya rata-rata jam kerja bersihnya per minggu tidak melewati \"Batas jam kerja bersih per minggu\", karena Shift 3 lebih panjang (9 jam bersih, Shift 1/2 8 jam). Contoh bulan 31 hari: 21 hari, bukan 22. Hanya berlaku bila target = Otomatis. Uji 6 bulan: temuan penting sedikit berkurang, tetapi ada 2 hari IDEAL lebih sedikit. Saran pengelola: Tidak." },
   { key: "balanceDayOnlyShifts", label: "Seimbangkan Shift 1 dan Shift 2 untuk yang tidak boleh Shift 3", kind: "yesno", explain: "Ya = kira-kira separuh Shift 1 dan separuh Shift 2 setiap bulan." },
+  { key: "balanceNightWorkerDayShifts", label: "Seimbangkan Shift 1 dan Shift 2 untuk yang boleh Shift 3", kind: "yesno", optional: true, explain: "Ya = Shift 2 dibagi merata di antara yang juga masuk Shift 3, sebanding dengan hari Shift 1 + Shift 2 masing-masing (tidak separuh-separuh, karena Shift 1 butuh lebih banyak orang). Contoh November 2026: sekitar 8 Shift 1 dan 4 Shift 2 per orang, bukan 10 dan 1." },
   { key: "breakHours", label: "Istirahat tidak dibayar per shift (jam)", min: 0, max: 2, optional: true, explain: "Dipakai untuk menghitung jam kerja bersih. Contoh: Shift 1 07:00-16:00 dengan istirahat 1 jam = 8 jam kerja." },
   { key: "weeklyHoursLimit", label: "Batas jam kerja bersih per minggu", min: 35, max: 48, optional: true, explain: "Senin-Minggu. Roster berusaha tidak melewati batas ini; kelebihannya dilaporkan untuk HR (bisa menjadi lembur)." },
   { key: "dailyHoursLimit", label: "Batas jam kerja bersih per hari (rekap lembur HR)", min: 6, max: 12, optional: true, explain: "Hanya untuk laporan HR, tidak mengubah roster. 8 = skema 5 hari kerja (8 jam sehari, 40 jam seminggu); 7 = skema 6 hari kerja. Shift 3 = 9 jam bersih, jadi setiap malam ada 1 jam di atas 8 jam yang bisa menjadi lembur." },
@@ -154,6 +163,12 @@ export async function createInputWorkbook(file, { team = DEFAULT_TEAM, coverage 
     ["4. Hasil ada di folder hasil/TAHUN-BULAN. Periksa sheet Ringkasan, lalu kirim ke Operations Manager.", false],
     ["5. Setelah Operations Manager setuju: di file roster, sheet Ringkasan bagian \"Persetujuan\", ubah Status roster menjadi DISETUJUI lalu simpan.", false],
     ["", false],
+    ["Permintaan shift: Minta, Hindari atau Dispensasi", true],
+    ["• Minta Shift 1/2/3 = pasti masuk shift itu pada tanggal itu. Untuk hari tertentu saja.", false],
+    ["• Hindari Shift 1/2/3 = boleh masuk, tapi tidak shift itu. Permintaan pribadi (misalnya kuliah malam): bagian Shift 3 orang itu tetap dihitung, jadi diganti di hari lain.", false],
+    ["• Dispensasi Shift 1/2/3 = boleh masuk, tapi tidak shift itu. Keringanan resmi untuk alasan apa pun (pemulihan medis, sertifikasi, training, kuliah); alasannya wajib diisi di Keterangan. Tidak menjadi utang: hari itu tidak dihitung dalam pembagian Shift 3 (bulan ini maupun bulan berikutnya) dan pembagian Shift 1 / Shift 2.", false],
+    ["• Beberapa jenis boleh di tanggal yang sama, misalnya Dispensasi Shift 3 dan Dispensasi Shift 1 = hanya Shift 2. Untuk beberapa tanggal terpisah, isi satu baris per tanggal (atau pakai menu 8).", false],
+    ["", false],
     ["Cadangan dari luar tim (boleh dikosongkan)", true],
     ["• Isi sheet \"Cadangan Luar Tim\" dengan orang di luar tim yang bisa dihubungi bila ada yang sakit mendadak dan tidak ada cadangan dalam tim.", false],
     ["• Mereka tidak dijadwalkan, hanya ditampilkan di sheet Cadangan pada file roster.", false],
@@ -219,7 +234,7 @@ export async function createInputWorkbook(file, { team = DEFAULT_TEAM, coverage 
   styleTitle(requests, "CUTI, TRAINING DAN PERMINTAAN", "Satu baris per orang per rentang tanggal. Baris di luar bulan yang dibuat diabaikan otomatis, jadi baris lama boleh dibiarkan.");
   [6, 18, 15, 15, 18, 48].forEach((width, index) => (requests.getColumn(index + 1).width = width));
   const example = requests.getRow(3);
-  example.values = ["Contoh:", "Addin", utcDate("2026-11-16"), utcDate("2026-11-18"), "Cuti", "Cuti tahunan (baris contoh ini tidak dibaca)"];
+  example.values = ["Contoh:", "Agus", utcDate("2026-11-16"), utcDate("2026-11-18"), "Cuti", "Cuti tahunan (baris contoh ini tidak dibaca)"];
   example.eachCell((cell) => {
     cell.font = { name: FONT, italic: true, color: { argb: COLORS.example } };
     if (cell.value instanceof Date) cell.numFmt = "dd/mm/yyyy";
@@ -324,6 +339,7 @@ function ruleValues(rules, shifts) {
     workDaysTarget: rules.workDaysTarget === "auto" ? "Otomatis" : rules.workDaysTarget,
     workDaysTargetHoursCap: rules.workDaysTargetHoursCap ? "Ya" : "Tidak",
     balanceDayOnlyShifts: rules.balanceDayOnlyShifts ? "Ya" : "Tidak",
+    balanceNightWorkerDayShifts: rules.balanceNightWorkerDayShifts === false ? "Tidak" : "Ya",
     fridayShift1Female: rules.fridayShift1Female === false ? "Tidak" : "Ya",
     leaveCountsAsWork: rules.leaveCountsAsWork === false ? "Tidak" : "Ya",
     longNightBlockOnlyIfNeeded: rules.longNightBlockOnlyIfNeeded === false ? "Tidak" : "Ya",
@@ -466,7 +482,8 @@ export async function appendRequest(file, { name, from, to, kind = "Cuti", note 
     const candidate = cellText(row.getCell(2));
     if (candidate && (candidate.toLowerCase() === canonical.toLowerCase() || slugify(candidate) === slugify(canonical))) canonical = candidate;
   });
-  const kindByCode = new Map(REQUEST_KINDS.map(([label, code]) => [code.toLowerCase(), label]));
+  // A code means its first kind: "!3" is Hindari Shift 3 (Dispensasi is only chosen by name).
+  const kindByCode = new Map([...REQUEST_KINDS].reverse().map(([label, code]) => [code.toLowerCase(), label]));
   const kindLabel = REQUEST_KINDS.find(([label]) => label.toLowerCase() === String(kind).trim().toLowerCase())?.[0] ?? kindByCode.get(String(kind).trim().toLowerCase()) ?? String(kind);
   const row = sheet.getRow(rowNumber);
   row.getCell(2).value = canonical;
@@ -633,6 +650,12 @@ export async function readInputWorkbook(file) {
           problems.push(`${where}: jenis "${kindText}" tidak dikenal. Pilih: ${REQUEST_KINDS.map(([label]) => label).join(", ")}.`);
           continue;
         }
+        const kind = REQUEST_KINDS.find(([label]) => label.toLowerCase() === kindText.toLowerCase())[0];
+        const note = cellText(row.getCell(6));
+        if (DISPENSATION_KINDS.has(kind) && !note) {
+          problems.push(`${where}: Dispensasi perlu alasan di kolom Keterangan (misalnya "Program pemulihan medis" atau "Sertifikasi CCNA").`);
+          continue;
+        }
         if (["1", "2", "3"].includes(code) && !member.eligibleShifts.includes(code)) {
           problems.push(`${where}: ${member.name} tidak boleh ${KODE_LABEL[code]}.`);
           continue;
@@ -641,10 +664,10 @@ export async function readInputWorkbook(file) {
         const clash = requests.find((other) => other.memberId === member.id && other.code !== code && !(avoid(other.code) && avoid(code)) && other.from <= to && from <= other.to);
         if (clash) {
           const day = from > clash.from ? from : clash.from;
-          problems.push(`${where}: bentrok dengan baris ${clash.row} (${member.name} ${formatTanggal(day, { pendek: true })}: ${clash.kind} dan ${REQUEST_KINDS.find(([, value]) => value === code)[0]}).`);
+          problems.push(`${where}: bentrok dengan baris ${clash.row} (${member.name} ${formatTanggal(day, { pendek: true })}: ${clash.kind} dan ${kind}).`);
           continue;
         }
-        requests.push({ memberId: member.id, name: member.name, from, to, code, kind: REQUEST_KINDS.find(([, value]) => value === code)[0], note: cellText(row.getCell(6)), source: where, row: rowNumber });
+        requests.push({ memberId: member.id, name: member.name, from, to, code, kind, note, source: where, row: rowNumber, ...(DISPENSATION_KINDS.has(kind) ? { dispensation: true } : {}) });
       }
     }
   }
@@ -738,7 +761,7 @@ export async function readInputWorkbook(file) {
         else parsed[rule.key] = value;
       }
     }
-    for (const key of ["maxConsecutiveWorkDays", "nightRecoveryOffDays", "minimumRestHours", "maxConsecutiveOffDays", "workDaysTarget", "balanceDayOnlyShifts", "fridayShift1Female", "leaveCountsAsWork", "longNightBlockOnlyIfNeeded", "breakHours", "weeklyHoursLimit", "overtimeHours", "nightFreeDaysAfterSick", "workDaysTargetHoursCap", "nightFreeDaysAfterShortSick", "dailyHoursLimit"]) {
+    for (const key of ["maxConsecutiveWorkDays", "nightRecoveryOffDays", "minimumRestHours", "maxConsecutiveOffDays", "workDaysTarget", "balanceDayOnlyShifts", "balanceNightWorkerDayShifts", "fridayShift1Female", "leaveCountsAsWork", "longNightBlockOnlyIfNeeded", "breakHours", "weeklyHoursLimit", "overtimeHours", "nightFreeDaysAfterSick", "workDaysTargetHoursCap", "nightFreeDaysAfterShortSick", "dailyHoursLimit"]) {
       if (parsed[key] !== undefined) rules[key] = parsed[key];
     }
     if ((rules.nightFreeDaysAfterShortSick ?? 0) > (rules.nightFreeDaysAfterSick ?? 0)) {

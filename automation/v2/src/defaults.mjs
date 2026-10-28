@@ -12,12 +12,12 @@ export const DEFAULT_TRAINING_WINDOW = Object.freeze({ start: "08:00", end: "17:
 
 // Row order matters only as a tie-break for the night rotation when there is no history.
 export const DEFAULT_TEAM = Object.freeze([
-  { id: "hilvani", name: "Hilvani", gender: "P", eligibleShifts: ["1", "2"] },
-  { id: "pavitasari", name: "Pavitasari", gender: "P", eligibleShifts: ["1", "2"] },
-  { id: "rizky", name: "Rizky", gender: "L", eligibleShifts: ["1", "2", "3"] },
-  { id: "willy", name: "Willy", gender: "L", eligibleShifts: ["1", "2", "3"] },
-  { id: "arman", name: "Arman", gender: "L", eligibleShifts: ["1", "2", "3"] },
-  { id: "addin", name: "Addin", gender: "L", eligibleShifts: ["1", "2", "3"] }
+  { id: "hana", name: "Hana", gender: "P", eligibleShifts: ["1", "2"] },
+  { id: "putri", name: "Putri", gender: "P", eligibleShifts: ["1", "2"] },
+  { id: "rudi", name: "Rudi", gender: "L", eligibleShifts: ["1", "2", "3"] },
+  { id: "wawan", name: "Wawan", gender: "L", eligibleShifts: ["1", "2", "3"] },
+  { id: "ardi", name: "Ardi", gender: "L", eligibleShifts: ["1", "2", "3"] },
+  { id: "agus", name: "Agus", gender: "L", eligibleShifts: ["1", "2", "3"] }
 ]);
 
 export const DEFAULT_COVERAGE = Object.freeze({
@@ -34,10 +34,12 @@ export const DEFAULT_RULES = Object.freeze({
   nightRecoveryOffDays: 2,
   nightBlock: { min: 2, preferred: 2, max: 3 },
   balanceDayOnlyShifts: true,
+  // The night workers' Shift 1 / Shift 2 split close to a fair share (user, 28 Oct; shift-share.mjs).
+  balanceNightWorkerDayShifts: true,
   // Back from sick leave (e.g. hospital): no Shift 3 for the first days back.
   // `nightFreeDaysAfterShortSick` (Aturan row, for 1-2 sick days) defaults to the same.
   nightFreeDaysAfterSick: 5,
-  // Aturan option (5 Oct, Jamal's choice in the Excel): lower the night workers'
+  // Aturan option (5 Oct, the owner's choice in the Excel): lower the night workers'
   // automatic target so their average week stays within weeklyHoursLimit.
   workDaysTargetHoursCap: false,
   // Only for the HR summary (hours above it each day may be overtime): 8 in the
@@ -131,13 +133,18 @@ export const DEFAULT_WEIGHTS = Object.freeze({
   singleWorkDay: 1000,
   // A 2-day work block (H H 1 1 H H); 4-5 days then 2 off is the aim.
   shortWorkBlock: 40,
-  // Hilvani/Pavitasari: Shift 1 and Shift 2 balanced (user's decision). Strong
+  // Hana/Putri: Shift 1 and Shift 2 balanced (user's decision). Strong
   // enough to hold now that 2-1-1 days make Shift 1 need more people.
   dayShiftImbalance: 30,
   // 300 since 30 Sep: with the same shift through a work block the women's
   // balance needs whole blocks; six-month backtest: months with a Shift 1/2 gap
   // above 2 went 2 -> 1, IDEAL 55 -> 53, weeks above 40 h 38 -> 33.
   dayShiftImbalanceFinal: 300,
+  // Night workers: Shift 2 days close to their fair share (shift-share.mjs; user,
+  // 28 Oct). Daily: the gap between the most and least Shift 2 beyond 2 days.
+  // End of month: each day beyond 1 from the fair share.
+  nightWorkerDayShiftDaily: 30,
+  nightWorkerDayShiftFinal: 300,
   consecutiveOffReward: 8,
   fullWeekendOffFirst: 450,
   fullWeekendOffNext: 15

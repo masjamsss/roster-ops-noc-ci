@@ -90,3 +90,92 @@ test("a 3-night block continued from last month counts in this month's review, a
   const night = review.findings.find((finding) => finding.id === "malam-adil");
   assert.match(night?.details.join(" ") ?? "", /Cahyo 4 malam \(2 blok 3 malam\)/);
 });
+
+test("Dispensasi Shift 3 days are not counted when the review compares nights (user, 28 Oct)", () => {
+  const dates = Array.from({ length: 30 }, (_, i) => `2026-11-${String(i + 1).padStart(2, "0")}`);
+  const row = (nights, fill = "1") => dates.map((_, i) => (nights.includes(i) ? "3" : fill)).join("");
+  const rows = { ani: row([]), bela: row([], "2"), cahyo: row([0, 1, 5, 6, 10]), dodi: row([0, 1, 5, 6, 10, 11, 15, 16, 20, 21]) };
+  const schedule = Object.fromEntries(Object.entries(rows).map(([id, codes]) => [id, Object.fromEntries(dates.map((date, i) => [date, codes[i]]))]));
+  const input = (cahyo) => ({
+    ...base, schedule, days: dates.map((date) => day(date, false, { 1: 2, 2: 1, 3: 1 }, "CUKUP")),
+    memberSummary: { ...base.memberSummary, cahyo: summary({ shifts: { 1: 25, 2: 0, 3: 5 }, ...cahyo }), dodi: summary({ shifts: { 1: 20, 2: 0, 3: 10 } }) }
+  });
+  // Cahyo had Dispensasi Shift 3 for 15 days: 5 nights in 15 days is the same rate as Dodi's 10 in 30.
+  assert.equal(reviewQuality(input({ dispensationDays: { 3: 15 } })).findings.find((finding) => finding.id === "malam-adil"), undefined);
+  assert.ok(reviewQuality(input({})).findings.find((finding) => finding.id === "malam-adil"), "without it, 5 vs 10 nights is uneven");
+});
+
+// November 2026 as generated on 21 Oct (screenshot): every rule met, but the
+// night workers' day shifts very uneven (Rudi 10 Shift 1 / 1 Shift 2, Agus 6 / 7).
+const NOVEMBER = {
+  hana: "111HH2222H111HH22H111H222H11HH",
+  putri: "CH1111HH22HH222H222HH11111HH22",
+  rudi: "H133HH1133HH11H11133HH11H233HH",
+  wawan: "33HH11HH1133HH1133HH2233HH22H1",
+  ardi: "22H133HH1111HH33HH2233HH111H33",
+  agus: "HH222H33HH2233HH1111HH2233HH11"
+};
+const team = [
+  { id: "hana", name: "Hana", gender: "P", eligibleShifts: ["1", "2"], dayOnly: true },
+  { id: "putri", name: "Putri", gender: "P", eligibleShifts: ["1", "2"], dayOnly: true },
+  ...["Rudi", "Wawan", "Ardi", "Agus"].map((name) => ({ id: name.toLowerCase(), name, gender: "L", eligibleShifts: ["1", "2", "3"], dayOnly: false }))
+];
+function november(rows, extra = {}) {
+  const dates = Array.from({ length: 30 }, (_, i) => `2026-11-${String(i + 1).padStart(2, "0")}`);
+  const schedule = Object.fromEntries(Object.entries(rows).map(([id, codes]) => [id, Object.fromEntries(dates.map((date, i) => [date, codes[i]]))]));
+  const days = dates.map((date) => {
+    const weekend = [0, 6].includes(new Date(`${date}T00:00:00Z`).getUTCDay());
+    const counts = { 1: 0, 2: 0, 3: 0 };
+    for (const id of Object.keys(rows)) if (counts[schedule[id][date]] !== undefined) counts[schedule[id][date]] += 1;
+    return day(date, weekend, counts, "OK");
+  });
+  const count = (id, code) => [...rows[id]].filter((item) => item === code).length;
+  const memberSummary = Object.fromEntries(Object.keys(rows).map((id) => [id, summary({
+    workDays: 20, workTarget: 20, shifts: { 1: count(id, "1"), 2: count(id, "2"), 3: count(id, "3") }, leaveDays: count(id, "C"), weeklyHours: []
+  })]));
+  return { ...base, members: team, schedule, days, memberSummary, ...extra };
+}
+const splitFinding = (review) => review.findings.find((finding) => finding.id === "shift2-merata");
+
+test("night workers: an uneven Shift 1 / Shift 2 split is flagged with each person's fair share (user, 28 Oct)", () => {
+  const finding = splitFinding(reviewQuality(november(NOVEMBER)));
+  assert.ok(finding, "November 2026: Rudi 10 / 1 and Agus 6 / 7 while the others are 7 / 4 and 8 / 4");
+  assert.equal(finding.level, "perhatian");
+  assert.match(finding.title, /yang boleh Shift 3/);
+  // The men do 16 of their 47 day shifts on Shift 2: about 4 for 11 or 13 day shifts.
+  assert.deepEqual(finding.details, ["Rudi Shift 1 10 / Shift 2 1 (wajar sekitar 4 Shift 2)", "Agus Shift 1 6 / Shift 2 7 (wajar sekitar 4 Shift 2)"]);
+});
+
+test("night workers: a split within 1.5 days of the fair share is fine", () => {
+  // Rudi takes Agus's Shift 2 on 23-24 Nov and gives back two Shift 1 days: 8/3, 7/4, 8/4, 8/5.
+  const rows = { ...NOVEMBER, rudi: "H133HH1133HH11H11133HH22H233HH", agus: "HH222H33HH2233HH1111HH1133HH11" };
+  assert.equal(splitFinding(reviewQuality(november(rows))), undefined);
+});
+
+test("night workers: someone away most of the month is left out of the comparison", () => {
+  // Wawan on leave from 8 Nov: his 1 Shift 2 in a week is not uneven, and does not change the others' share.
+  const rows = { ...NOVEMBER, wawan: `33HH112${"C".repeat(23)}` };
+  const finding = splitFinding(reviewQuality(november(rows)));
+  assert.ok(finding);
+  assert.ok(!finding.details.some((text) => text.startsWith("Wawan")), finding.details.join(" | "));
+});
+
+test("night workers: no finding when the Aturan row switches the balance off", () => {
+  const review = reviewQuality(november(NOVEMBER, { settings: { rules: { weeklyHoursLimit: 40, balanceNightWorkerDayShifts: false } } }));
+  assert.equal(splitFinding(review), undefined);
+});
+
+test("Dispensasi Shift 1/2 days are left out when the review compares Shift 1 and Shift 2 (user, 28 Oct)", () => {
+  // Ani had Dispensasi Shift 2 on 8 days (she worked Shift 1); Cahyo on 6 days.
+  const review = (split) => reviewQuality({
+    ...base,
+    memberSummary: {
+      ...base.memberSummary,
+      ani: summary({ shifts: { 1: 14, 2: 6, 3: 0 }, ...(split ? { splitShifts: { 1: 6, 2: 6 } } : {}) }),
+      cahyo: summary({ shifts: { 1: 12, 2: 0, 3: 4 }, ...(split ? { splitShifts: { 1: 6, 2: 0 } } : {}) }),
+      dodi: summary({ shifts: { 1: 8, 2: 4, 3: 4 }, ...(split ? { splitShifts: { 1: 8, 2: 4 } } : {}) })
+    }
+  }).findings.map((finding) => finding.id);
+  assert.deepEqual(review(true).filter((id) => ["seimbang-perempuan", "shift2-merata"].includes(id)), []);
+  assert.deepEqual(review(false).filter((id) => ["seimbang-perempuan", "shift2-merata"].includes(id)), ["seimbang-perempuan", "shift2-merata"], "counted in full, both look uneven");
+});

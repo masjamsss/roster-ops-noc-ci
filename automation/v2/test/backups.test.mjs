@@ -7,7 +7,7 @@ import { parseRosterCsv } from "../src/roster-csv.mjs";
 
 const september = parseRosterCsv(readFileSync(new URL("./fixtures/september-2026.csv", import.meta.url), "utf8"));
 const history = { key: "2026-09", dates: september.dates, codesById: september.codesById, source: "csv" };
-const requests = [{ memberId: "willy", name: "Willy", from: "2026-10-12", to: "2026-10-13", code: "C", kind: "Cuti", source: "test" }];
+const requests = [{ memberId: "wawan", name: "Wawan", from: "2026-10-12", to: "2026-10-13", code: "C", kind: "Cuti", source: "test" }];
 
 test("Cadangan: only people on a normal day off who can step in without breaking a rule", { timeout: 120_000 }, async () => {
   const result = await generateRoster({ config: makeConfig({ year: 2026, month: 10, requests, search: { beamWidth: 1500 } }), calendars: [{ year: 2026, days: [] }], history });
@@ -20,7 +20,7 @@ test("Cadangan: only people on a normal day off who can step in without breaking
       assert.ok(member.eligibleShifts.includes(entry.shift), `${name} may work Shift ${entry.shift}`);
     }
   }
-  assert.ok(!result.backups.some((entry) => entry.names.includes("Willy") && ["2026-10-12", "2026-10-13"].includes(entry.date)), "someone on leave is never a backup");
+  assert.ok(!result.backups.some((entry) => entry.names.includes("Wawan") && ["2026-10-12", "2026-10-13"].includes(entry.date)), "someone on leave is never a backup");
   assert.ok(!result.backups.some((entry) => entry.shift === "3" && entry.names.some((name) => byName.get(name).dayOnly)), "day-only members never back up Shift 3");
   // Someone who just finished nights must not be offered for the next day.
   for (const block of result.nightBlocks) {
@@ -45,10 +45,10 @@ test("Cadangan: only people on a normal day off who can step in without breaking
 
 test("each person's mandatory rest after Shift 3 is counted", { timeout: 120_000 }, async () => {
   const result = await generateRoster({ config: makeConfig({ year: 2026, month: 10, search: { beamWidth: 1500 } }), calendars: [{ year: 2026, days: [] }], history });
-  assert.equal(result.memberSummary.hilvani.nightRecoveryDays, 0);
-  for (const id of ["rizky", "willy", "arman", "addin"]) {
+  assert.equal(result.memberSummary.hana.nightRecoveryDays, 0);
+  for (const id of ["rudi", "wawan", "ardi", "agus"]) {
     const blocks = result.nightBlocks.filter((block) => block.memberId === id).length;
-    const carried = id === "arman" ? 2 : 0; // 1-2 Oct rest after 29-30 Sep nights
+    const carried = id === "ardi" ? 2 : 0; // 1-2 Oct rest after 29-30 Sep nights
     assert.ok(result.memberSummary[id].nightRecoveryDays >= carried + 2 * blocks - 2, `${id}: ${result.memberSummary[id].nightRecoveryDays} rest days for ${blocks} blocks`);
   }
 });

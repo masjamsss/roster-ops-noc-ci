@@ -80,3 +80,13 @@ test("people who may not work Shift 3 are never asked to cover night hours with 
   assert.equal(womenOnly.early, null);
   assert.deepEqual(womenOnly.uncovered, [{ from: 45, to: 55 }], "the whole night stays open");
 });
+
+test("someone with Dispensasi or Hindari Shift 3 that day is not asked to cover night hours with overtime (user, 28 Oct)", () => {
+  const team = [{ id: "dodi", name: "Dodi", eligibleShifts: ["1", "2", "3"] }, { id: "eko", name: "Eko", eligibleShifts: ["1", "2", "3"] }, { id: "cici", name: "Cici", eligibleShifts: ["1", "2", "3"] }];
+  const timeline = { cici: [..."H3HH"], dodi: [..."H2HH"], eko: [..."H11H"] };
+  const night = (excluded) => overtimeCover({ dayIndex: 1, shiftId: "3", members: team, shifts: SHIFTS, minimumRestHours: 11, overtimeHours: 4, timeline, excluded });
+  assert.equal(night(new Set()).extension?.id, "dodi", "normally Dodi stays after his Shift 2");
+  const plan = night(new Set(["dodi"]));
+  assert.equal(plan.extension, null, "Dodi has Dispensasi Shift 3 that day: no night hours");
+  assert.equal(plan.early?.id, "eko");
+});

@@ -225,7 +225,8 @@ function ruleChoiceLines(rules) {
     `  • Target yang boleh Shift 3: ${rules.workDaysTargetHoursCap && typeof rules.workDaysTarget !== "number" ? `disesuaikan dengan batas ${rules.weeklyHoursLimit ?? 40} jam kerja per minggu (biasanya 1 hari lebih sedikit)` : "sama dengan yang lain"}`,
     `  • Setelah sakit 3 hari atau lebih: ${sick(longSick)}`,
     `  • Setelah sakit 1–2 hari: ${sick(shortSick)}`,
-    `  • Blok 3 malam hanya bila terpaksa: ${yes(rules.longNightBlockOnlyIfNeeded)} · Cuti dihitung hari kerja: ${yes(rules.leaveCountsAsWork)}`
+    `  • Blok 3 malam hanya bila terpaksa: ${yes(rules.longNightBlockOnlyIfNeeded)} · Cuti dihitung hari kerja: ${yes(rules.leaveCountsAsWork)}`,
+    `  • Shift 2 dibagi merata untuk yang boleh Shift 3: ${yes(rules.balanceNightWorkerDayShifts)}`
   ];
 }
 
@@ -263,7 +264,7 @@ export async function cekDampakPermintaan({ root, request, requests = [request],
       if (current) useCurrentRoster(config, current, { key, label, keep: true, from: null, now });
       let history;
       try {
-        history = await buildHistory(paths, key);
+        history = await buildHistory(paths, key, { requests: config.requests });
       } catch (error) {
         if (!(error instanceof RosterError)) throw error;
         unsure(`belum bisa dicek: ${error.message.split("\n")[0]}`);
@@ -397,7 +398,7 @@ export async function buatRoster({ root, monthKey, force = false, online = true,
   const later = await loadMonthCodes(paths, addMonths(key, 1)).catch(() => null);
   if (later) warnings.push(`Roster ${monthLabel(addMonths(key, 1))} sudah ada dan dibuat dari versi lama ${label}. Buat ulang ${monthLabel(addMonths(key, 1))} setelah ini agar sambungannya benar.`);
 
-  const history = withoutHistory ? { key: null, source: "none", dates: [], codesById: {}, manualChanges: [], notes: [] } : await buildHistory(paths, key);
+  const history = withoutHistory ? { key: null, source: "none", dates: [], codesById: {}, manualChanges: [], notes: [] } : await buildHistory(paths, key, { requests: config.requests });
   if (withoutHistory) warnings.push("Dibuat tanpa riwayat bulan lalu: semua orang dianggap baru selesai libur.");
   if (history.manualChanges?.length) warnings.push(`Roster ${monthLabel(history.key)} diubah manual (${history.manualChanges.length} perubahan); roster ini melanjutkan dari versi yang sudah diubah.`);
   const { year, month } = parseMonthKey(key);

@@ -7,7 +7,7 @@ import { dayScore, makeEnv } from "../src/objective.mjs";
 const config = makeConfig({ year: 2026, month: 10 });
 const env = { publishedCount: 31, lastPublishedIndex: 30, target: 22 };
 const states = config.members.map(() => ({ workCount: 0, availableDays: 0, weekendWorkCount: 0, nightCount: 0, s1Count: 0, s2Count: 0 }));
-// Member order: Hilvani (P), Pavitasari (P), Rizky, Willy, Arman, Addin. All patterns are 2-2-1.
+// Member order: Hana (P), Putri (P), Rudi, Wawan, Ardi, Agus. All patterns are 2-2-1.
 const womanOnS1 = ["1", "2", "1", "2", "3", "H"];
 const menOnS1 = ["2", "2", "1", "1", "3", "H"];
 const friday = { date: "2026-10-16", dayIndex: 15, isWeekend: false, isSpecial: false, published: true };
@@ -51,4 +51,63 @@ test("automatic target: the month's ideal work shared evenly, at most 5 workdays
   assert.equal(target(2027, 2), 20, "February: at most 20");
   const eight = [...DEFAULT_TEAM, { id: "budi", name: "Budi", eligibleShifts: ["1", "2", "3"] }, { id: "citra", name: "Citra", gender: "P", eligibleShifts: ["1", "2"] }];
   assert.equal(target(2026, 10, eight), 17, "a bigger team shares the same work (137 / 8), nobody is pushed to 22");
+});
+
+test("Dispensasi Shift 3: the month's night share counts only the days someone could do nights (user, 28 Oct)", () => {
+  const november = makeConfig({ year: 2026, month: 11 });
+  const { days } = buildDays(november, [{ year: 2026, days: [] }]);
+  const none = days.map(() => ({}));
+  const dispensation = days.map((day) => (day.published && day.date >= "2026-11-16" ? { rudi: new Set(["3"]) } : {}));
+  const excused = makeEnv(november, days, november.members, none, dispensation);
+  const plain = makeEnv(november, days, november.members, none);
+  const rudi = november.members.findIndex((member) => member.id === "rudi");
+  assert.equal(excused.memberTargets[rudi].nightRosterable, 15);
+  assert.equal(excused.memberTargets[rudi].rosterable, 30, "his workday target is unchanged: he still works day shifts");
+  assert.equal(plain.memberTargets[rudi].nightRosterable, 30);
+  // Last day of the month: Rudi did 4 nights (his share of 15 days) or 8 (a whole month's share).
+  const last = days.filter((day) => day.published).at(-1);
+  const others = { 4: [9, 9, 8], 8: [7, 7, 8] };
+  const end = (rudiNights) => {
+    const men = [rudiNights, ...others[rudiNights]];
+    return november.members.map((member, index) => ({
+      workCount: 21, excusedCount: 0, availableDays: 30, nightAvailableDays: member.id === "rudi" ? 15 : 30, weekendWorkCount: 5,
+      nightCount: member.dayOnly ? 0 : men[index - 2], s1Count: 0, s2Count: 0, longNightBlocks: 0
+    }));
+  };
+  const codes = ["1", "2", "1", "H", "3", "H"];
+  const score = (env, nights) => dayScore(codes, last, end(nights), november.members, november, env);
+  assert.ok(score(excused, 4) < score(excused, 8), "Dispensasi: 4 nights is his full share");
+  assert.ok(score(plain, 8) < score(plain, 4), "Hindari: the month still evens out his nights");
+});
+
+// Night workers' Shift 1 / Shift 2 (user, 28 Oct): each person's Shift 2 days are
+// compared with the group's share of Shift 2 among its Shift 1+2 days.
+const lastDay = { date: "2026-10-31", dayIndex: 30, isWeekend: true, isSpecial: true, published: true };
+const atEnd = (split) => config.members.map((member, index) => ({
+  workCount: 20, availableDays: 31, excusedCount: 0, weekendWorkCount: 6, nightCount: member.dayOnly ? 0 : 8, longNightBlocks: 0,
+  s1Count: member.dayOnly ? 10 : split[index - 2][0], s2Count: member.dayOnly ? 10 : split[index - 2][1]
+}));
+const UNEVEN = [[10, 1], [7, 4], [8, 4], [6, 7]]; // November 2026 as generated on 21 Oct
+const EVEN = [[8, 3], [7, 4], [8, 4], [8, 5]];
+const sameCodes = ["1", "2", "H", "H", "3", "H"];
+
+test("night workers: an uneven Shift 1 / Shift 2 split costs a penalty at the end of the month, a fair one costs nothing", () => {
+  const strict = makeConfig({ year: 2026, month: 10, weights: { nightWorkerDayShiftDaily: 0 } });
+  const score = (split) => dayScore(sameCodes, lastDay, atEnd(split), strict.members, strict, env);
+  assert.ok(strict.weights.nightWorkerDayShiftFinal > 0);
+  // 16 of 47 day shifts are Shift 2. Rudi: 1 instead of 11 × 16/47, Agus: 7 instead of 13 × 16/47; 1 day of slack each.
+  const expected = strict.weights.nightWorkerDayShiftFinal * ((11 * 16) / 47 - 1 - 1 + (7 - (13 * 16) / 47 - 1));
+  assert.ok(Math.abs(score(UNEVEN) - score(EVEN) - expected) < 1e-9, `${score(UNEVEN) - score(EVEN)} vs ${expected}`);
+  const off = makeConfig({ year: 2026, month: 10, rules: { ...DEFAULT_RULES, balanceNightWorkerDayShifts: false } });
+  assert.equal(dayScore(sameCodes, lastDay, atEnd(UNEVEN), off.members, off, env), dayScore(sameCodes, lastDay, atEnd(EVEN), off.members, off, env), "switched off in the Aturan sheet");
+});
+
+test("night workers: the split is also steered day by day, with 2 days of slack between the most and least Shift 2", () => {
+  const steady = makeConfig({ year: 2026, month: 10, weights: { nightWorkerDayShiftFinal: 0 } });
+  const score = (split) => dayScore(sameCodes, thursday, atEnd(split), steady.members, steady, env);
+  assert.ok(steady.weights.nightWorkerDayShiftDaily > 0);
+  const deviations = (split) => split.map(([s1, s2]) => s2 - ((s1 + s2) * 16) / 47);
+  const gap = Math.max(...deviations(UNEVEN)) - Math.min(...deviations(UNEVEN));
+  assert.ok(Math.max(...deviations(EVEN)) - Math.min(...deviations(EVEN)) <= 2, "the fair split is within the slack");
+  assert.ok(Math.abs(score(UNEVEN) - score(EVEN) - steady.weights.nightWorkerDayShiftDaily * (gap - 2)) < 1e-9);
 });

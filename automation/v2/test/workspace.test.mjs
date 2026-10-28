@@ -27,7 +27,7 @@ test("the September seed CSV is found as the latest month and read as history", 
   assert.equal(history.source, "csv");
   assert.equal(history.key, "2026-09");
   assert.equal(history.dates.at(-1), "2026-09-30");
-  assert.deepEqual(history.codesById.addin.slice(-4), ["1", "2", "2", "2"]);
+  assert.deepEqual(history.codesById.agus.slice(-4), ["1", "2", "2", "2"]);
 });
 
 test("a missing previous month stops with the month the admin must create first", async () => {
@@ -46,7 +46,7 @@ test("an edited roster Excel wins over the JSON, and the swap is reported", asyn
   await mkdir(files.dir, { recursive: true });
   await writeFile(files.json, JSON.stringify(result));
   await writeRosterWorkbook(result, files.excel, {});
-  const original = result.schedule.hilvani["2026-10-31"];
+  const original = result.schedule.hana["2026-10-31"];
   const replacement = original === "H" ? "C" : "H";
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(files.excel);
@@ -56,10 +56,10 @@ test("an edited roster Excel wins over the JSON, and the swap is reported", asyn
 
   const loaded = await loadMonthCodes(paths, "2026-10");
   assert.equal(loaded.source, "excel");
-  assert.equal(loaded.codesById.hilvani.at(-1), replacement);
-  assert.deepEqual(loaded.manualChanges.map((change) => [change.memberId, change.date, change.from, change.to]), [["hilvani", "2026-10-31", original, replacement]]);
+  assert.equal(loaded.codesById.hana.at(-1), replacement);
+  assert.deepEqual(loaded.manualChanges.map((change) => [change.memberId, change.date, change.from, change.to]), [["hana", "2026-10-31", original, replacement]]);
   const history = await buildHistory(paths, "2026-11");
-  assert.equal(history.codesById.hilvani.at(-1), replacement, "next month continues from the edited Excel");
+  assert.equal(history.codesById.hana.at(-1), replacement, "next month continues from the edited Excel");
 });
 
 test("archiving moves the current files into arsip/<local date and time>", async () => {

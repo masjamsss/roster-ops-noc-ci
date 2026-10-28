@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CODE, isOffLike, isShiftCode, isWorkLike, normalizeCode } from "../src/codes.mjs";
-import { formatTanggal, namaBulan, namaHariPendek } from "../src/labels-id.mjs";
+import { formatDaftarTanggal, formatTanggal, namaBulan, namaHariPendek } from "../src/labels-id.mjs";
 import { addMonths, daysInMonth, monthKey, parseMonthKey } from "../src/date-utils.mjs";
 
 const SHIFTS = ["1", "2", "3"];
@@ -46,4 +46,11 @@ test("month helpers", () => {
   assert.equal(addMonths("2026-01", -1), "2025-12");
   assert.equal(daysInMonth(2028, 2), 29);
   assert.throws(() => parseMonthKey("2026-13"), /Bulan tidak valid/);
+});
+
+test("formatDaftarTanggal: scattered dates in plain Indonesian, the month once", () => {
+  assert.equal(formatDaftarTanggal(["2026-11-05", "2026-11-12", "2026-11-13", "2026-11-14", "2026-11-20"]), "5, 12–14 dan 20 Nov");
+  assert.equal(formatDaftarTanggal(["2026-11-16", "2026-11-17", "2026-11-18"]), "16–18 Nov");
+  assert.equal(formatDaftarTanggal(["2026-11-30", "2026-12-01", "2026-12-05"]), "30 Nov – 1 Des dan 5 Des");
+  assert.equal(formatDaftarTanggal(["2026-11-05"]), "5 Nov");
 });

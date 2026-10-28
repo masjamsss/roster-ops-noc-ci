@@ -728,7 +728,7 @@ function summarySheet(workbook, result, L, checks) {
       setCell(sheet.getCell(row, totalStart), { formula: `ROUND((${cells(0).join("+")})*30/MAX(1,${cells(2).join("+")}),1)`, result: Math.round((nights * 30 / Math.max(1, available)) * 10) / 10 }, { bold: true, numFmt: "0.0" });
     });
     row += 1;
-    paragraph(sheet, row, "Shift 3 dan blok 3 malam dibagi adil per hari tersedia (cuti, sakit dan training tidak dihitung). Selisih dari bulan-bulan sebelumnya dicicil: setengahnya diimbangi bulan ini, paling banyak 2 malam. Kolom terakhir membandingkan beban malam antarorang, termasuk yang banyak cuti.", lastColumn, { italic: true, color: C.note, size: 9, charsPerLine: 160 });
+    paragraph(sheet, row, "Shift 3 dan blok 3 malam dibagi adil per hari tersedia (cuti, sakit, training dan dispensasi Shift 3 tidak dihitung). Selisih dari bulan-bulan sebelumnya dicicil: setengahnya diimbangi bulan ini, paling banyak 2 malam. Kolom terakhir membandingkan beban malam antarorang, termasuk yang banyak cuti.", lastColumn, { italic: true, color: C.note, size: 9, charsPerLine: 160 });
   }
 
   row += 2;

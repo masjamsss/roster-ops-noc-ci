@@ -3,8 +3,10 @@ import { isWorkLike } from "./codes.mjs";
 import { addDays, isoDate, parseClock } from "./date-utils.mjs";
 import { displayTargets, fridayWithoutFemale } from "./objective.mjs";
 import { lastLongSickIndex } from "./history.mjs";
+import { countsForShift2Share, excusedFromSplit } from "./shift-share.mjs";
 import { dayStatus } from "./staffing.mjs";
-import { daftarNama, formatPeriode, formatRentang, formatTanggal, KODE_LABEL } from "./labels-id.mjs";
+import { daftarNama, formatDaftarTanggal, formatPeriode, formatRentang, formatTanggal, KODE_LABEL } from "./labels-id.mjs";
+import { isActive } from "./rules.mjs";
 
 const restedOff = (code) => code === "H" || code === "C" || code === "S";
 
@@ -34,7 +36,7 @@ function shiftStart(monthStart) {
   return date.toISOString().slice(0, 10);
 }
 
-export function computeMemberSummary({ members, days, codes, historyCodes, historyDates = [], shiftIds, nightId, env, netHours = {}, weeklyHoursLimit = 40, dailyHoursLimit = 8 }) {
+export function computeMemberSummary({ members, days, codes, historyCodes, historyDates = [], shiftIds, nightId, env, netHours = {}, weeklyHoursLimit = 40, dailyHoursLimit = 8, dispensation = [] }) {
   const summary = {};
   members.forEach((member, i) => {
     const before = (d) => (d > 0 ? codes[i][d - 1] : (historyCodes[i].at(-1) ?? "-"));
@@ -61,7 +63,11 @@ export function computeMemberSummary({ members, days, codes, historyCodes, histo
       hoursOverLimit: 0,
       dailyHoursOver: 0,
       workTarget: 0,
-      workTargetBase: 0
+      workTargetBase: 0,
+      // Days with a Dispensasi per shift, on days the person was rosterable (not C, S, T or -).
+      dispensationDays: Object.fromEntries(shiftIds.map((id) => [id, 0])),
+      // Shift 1 / Shift 2 for the split: without the days with Dispensasi Shift 1 or 2 (shift-share.mjs).
+      splitShifts: { 1: 0, 2: 0 }
     };
     days.forEach((day, d) => {
       if (!day.published) return;
@@ -79,6 +85,8 @@ export function computeMemberSummary({ members, days, codes, historyCodes, histo
       else if (code === "S") item.sickDays += 1;
       else if (code === "T") item.trainingDays += 1;
       else if (code === "-") item.inactiveDays += 1;
+      if (!["C", "S", "T", "-"].includes(code)) for (const id of dispensation[d]?.[member.id] ?? []) if (id in item.dispensationDays) item.dispensationDays[id] += 1;
+      if ((code === "1" || code === "2") && !excusedFromSplit(dispensation[d]?.[member.id])) item.splitShifts[code] += 1;
       const previous = before(d);
       if (day.isSunday && restedOff(previous) && restedOff(code)) item.fullWeekendsOff += 1;
       if (code === "H" && isWorkLike(previous, shiftIds) && d + 1 < days.length && isWorkLike(codes[i][d + 1], shiftIds)) item.isolatedOffDays += 1;
@@ -141,6 +149,40 @@ function trailingRun(codes, code) {
   let count = 0;
   for (let index = codes.length - 1; index >= 0 && codes[index] === code; index -= 1) count += 1;
   return count;
+}
+
+// Dispensasi (user, 28 Oct): who is excused from which shift on which dates and
+// why, one line per person and reason; the same dates for two shifts are one line.
+function dispensationNotes({ members, published, config, nightId }) {
+  const inMonth = new Set(published.map((day) => day.date));
+  const groups = new Map();
+  for (const request of config.requests) {
+    if (!request.dispensation || !request.code?.startsWith("!")) continue;
+    const member = members.find((item) => item.id === request.memberId);
+    if (!member) continue;
+    const dates = [];
+    for (let date = request.from; date <= request.to; date = isoDate(addDays(date, 1))) if (inMonth.has(date) && isActive(member, date)) dates.push(date);
+    if (dates.length === 0) continue;
+    for (const shiftId of request.code.slice(1)) {
+      const key = `${member.id}|${request.note ?? ""}|${shiftId}`;
+      if (!groups.has(key)) groups.set(key, { member, note: request.note ?? "", shifts: [shiftId], dates: new Set() });
+      for (const date of dates) groups.get(key).dates.add(date);
+    }
+  }
+  const lines = new Map();
+  for (const group of groups.values()) {
+    const dates = [...group.dates].sort();
+    const key = `${group.member.id}|${group.note}|${dates.join(",")}`;
+    if (lines.has(key)) lines.get(key).shifts.push(...group.shifts);
+    else lines.set(key, { ...group, dates });
+  }
+  return [...lines.values()].map(({ member, note, shifts, dates }) => {
+    const sorted = [...new Set(shifts)].sort();
+    const names = daftarNama(sorted.map((id) => `Shift ${id}`));
+    const shares = [...(sorted.includes(nightId) ? ["Shift 3"] : []), ...(excusedFromSplit(new Set(sorted)) ? ["Shift 1 / Shift 2"] : [])];
+    const noDebt = shares.length ? ` Hari-hari itu tidak dihitung dalam pembagian ${shares.join(" maupun ")}, jadi ${member.name} tidak perlu menggantinya nanti.` : "";
+    return `Dispensasi: ${member.name} tidak masuk ${names} tgl ${formatDaftarTanggal(dates)}${note ? ` (${note})` : ""}.${noDebt}`;
+  });
 }
 
 export function buildNotes({ members, days, codes, historyDates, historyCodes, initialStates, initialQueue, nightBlocks, summary, dayRows, config, env, requestCount, nightId, backups = [], backupPlan = [], changes = [], externalBackups = [], minimalReasons = [] }) {
@@ -310,6 +352,10 @@ export function buildNotes({ members, days, codes, historyDates, historyCodes, i
   if (dayOnly.length > 0) {
     notes.push(`Pembagian Shift 1 / Shift 2 untuk yang tidak masuk Shift 3: ${dayOnly.map((member) => `${member.name} ${summary[member.id].shifts["1"]} / ${summary[member.id].shifts["2"]}`).join(", ")}.`);
   }
+  const nightDay = members.filter((member) => countsForShift2Share(member) && summary[member.id].inactiveDays === 0);
+  if (nightDay.length > 1 && config.rules.balanceNightWorkerDayShifts !== false) {
+    notes.push(`Pembagian Shift 1 / Shift 2 untuk yang juga masuk Shift 3 (Shift 2 dibagi sebanding dengan hari Shift 1 + Shift 2 masing-masing): ${nightDay.map((member) => `${member.name} ${summary[member.id].shifts["1"]} / ${summary[member.id].shifts["2"]}`).join(", ")}.`);
+  }
 
   const noWeekend = active.filter((member) => summary[member.id].fullWeekendsOff === 0).map((member) => member.name);
   if (noWeekend.length > 0) notes.push(`Belum mendapat libur Sabtu–Minggu penuh bulan ini: ${daftarNama(noWeekend)}.`);
@@ -342,6 +388,7 @@ export function buildNotes({ members, days, codes, historyDates, historyCodes, i
     notes.push(`Minggu dengan jam kerja bersih di atas ${config.rules.weeklyHoursLimit ?? 40} jam: ${overWeeks.map((member) => `${member.name} (${summary[member.id].weeksOverLimit} minggu, +${summary[member.id].hoursOverLimit} jam)`).join(", ")}. Bisa menjadi lembur; cek dengan HR.`);
   } else notes.push(`Tidak ada minggu dengan jam kerja bersih di atas ${config.rules.weeklyHoursLimit ?? 40} jam.`);
   notes.push(requestCount > 0 ? `Cuti/permintaan yang dimasukkan: ${requestCount} baris, semua dipenuhi.` : "Tidak ada cuti atau permintaan untuk bulan ini.");
+  notes.push(...dispensationNotes({ members, published, config, nightId }));
   return notes;
 }
 

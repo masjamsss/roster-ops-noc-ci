@@ -45,7 +45,7 @@ test("double validation: every check on the Pemeriksaan sheet is a formula, and 
   sheet.eachRow((row) => row.eachCell((cell) => {
     if (cell.value?.formula && /Sama|Berbeda/.test(String(cell.value.result))) verdicts.push(cell.value.result);
   }));
-  assert.equal(verdicts.length, result.audit.checks.length + 9 + result.members.length, "one verdict per rule, quality check and person");
+  assert.equal(verdicts.length, result.audit.checks.length + 10 + result.members.length, "one verdict per rule, quality check and person");
   assert.deepEqual([...new Set(verdicts)], ["✔ Sama"]);
   const ringkasan = workbook.getWorksheet("Ringkasan");
   const formulas = [];
@@ -140,10 +140,10 @@ test("Ringkasan shows each night person's Shift 3 and 3-night blocks over the la
     stats: rollingStats([{ key: "2026-09", dates: september.dates, codesById: september.codesById }], september.memberIds, ["1", "2", "3"]) };
   const result = await generateRoster({ config: makeConfig({ year: 2026, month: 10, search: { beamWidth: 300 } }), calendars: [{ year: 2026, days: [] }], history });
   assert.deepEqual(result.fairness.months, ["2026-09", "2026-10"]);
-  const addin = result.fairness.members.find((item) => item.id === "addin");
-  assert.deepEqual(addin.months[0], { key: "2026-09", nights: 6, longBlocks: 2, availableDays: 14 }, "Addin: 16 days of cuti in September");
-  assert.equal(addin.months[1].nights, result.memberSummary.addin.shifts["3"]);
-  assert.ok(!result.fairness.members.some((item) => item.id === "hilvani"), "day-only members are not in the rotation");
+  const agus = result.fairness.members.find((item) => item.id === "agus");
+  assert.deepEqual(agus.months[0], { key: "2026-09", nights: 6, longBlocks: 2, availableDays: 14 }, "Agus: 16 days of cuti in September");
+  assert.equal(agus.months[1].nights, result.memberSummary.agus.shifts["3"]);
+  assert.ok(!result.fairness.members.some((item) => item.id === "hana"), "day-only members are not in the rotation");
 
   const dir = await mkdtemp(path.join(tmpdir(), "roster-fair-"));
   const file = path.join(dir, "Roster Oktober 2026.xlsx");
@@ -203,4 +203,54 @@ test("the HR table shows hours above the daily limit as a live formula that foll
     assert.equal(cell.value.result ?? 0, result.memberSummary[member.id].dailyHoursOver, member.name); // exceljs reads a cached 0 as empty
   });
   assert.ok(result.members.some((member) => result.memberSummary[member.id].dailyHoursOver > 0), "night workers have hours above the daily limit");
+});
+
+test("double validation understands 'Dispensasi Shift X': nights compared per night-available day, Excel = program (user, 28 Oct)", { timeout: 300_000 }, async () => {
+  const requests = [{ memberId: "cahyo", name: "Cahyo", from: "2026-12-17", to: "2026-12-31", code: "!3", kind: "Dispensasi Shift 3", note: "Sertifikasi CCNA", dispensation: true, source: "test" }];
+  const result = await generateRoster({ config: makeConfig({ year: 2026, month: 12, team: TEAM, requests, search: { beamWidth: 300 } }), calendars: holidays, history: { dates: [], codesById: {} } });
+  const dir = await mkdtemp(path.join(tmpdir(), "roster-dispensation-"));
+  const file = path.join(dir, "Roster Desember 2026.xlsx");
+  await writeRosterWorkbook(result, file, { holidayCalendars: holidays, holidayNotes: [], holidayDifferences: [], inputFile: "Data Roster.xlsx" });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(file);
+  const verdicts = [];
+  workbook.getWorksheet("Pemeriksaan").eachRow((row) => row.eachCell((cell) => { if (/Sama|Berbeda/.test(String(cell.value?.result))) verdicts.push(cell.value.result); }));
+  assert.deepEqual([...new Set(verdicts)], ["✔ Sama"]);
+  // Hitungan: Cahyo's nights per month are scaled by the 16 days he could do nights, by a formula that reads the Dispensasi row.
+  const hitungan = workbook.getWorksheet("Hitungan");
+  const cahyo = result.members.findIndex((member) => member.id === "cahyo");
+  const cell = hitungan.getCell(2 + cahyo, 18).value;
+  assert.match(cell.formula, /FIND\("3",Hitungan!/);
+  assert.equal(cell.result, (result.memberSummary.cahyo.shifts["3"] * 31) / 16);
+  assert.ok(result.notes.some((note) => note.startsWith("Dispensasi: Cahyo tidak masuk Shift 3 tgl 17–31 Des (Sertifikasi CCNA).")), result.notes.join("\n"));
+});
+
+test("double validation leaves Dispensasi Shift 1/2 days out of the Shift 1 / Shift 2 split, Excel = program (user, 28 Oct)", { timeout: 300_000 }, async () => {
+  // Ani (day shifts only) has evening classes 1-12 Dec; Eko a morning program 14-18 Dec.
+  const requests = [
+    { memberId: "ani", name: "Ani", from: "2026-12-01", to: "2026-12-12", code: "!2", kind: "Dispensasi Shift 2", note: "Kuliah sore", dispensation: true, source: "test" },
+    { memberId: "eko", name: "Eko", from: "2026-12-14", to: "2026-12-18", code: "!1", kind: "Dispensasi Shift 1", note: "Sertifikasi pagi", dispensation: true, source: "test" }
+  ];
+  const result = await generateRoster({ config: makeConfig({ year: 2026, month: 12, team: TEAM, requests, search: { beamWidth: 300 } }), calendars: holidays, history: { dates: [], codesById: {} } });
+  assert.ok(result.audit.ok);
+  const ani = result.memberSummary.ani;
+  assert.ok(Object.entries(result.schedule.ani).every(([date, code]) => date > "2026-12-12" || code !== "2"), "no Shift 2 for Ani on 1-12 Dec");
+  assert.ok(ani.splitShifts["1"] + ani.splitShifts["2"] < ani.shifts["1"] + ani.shifts["2"], "her 1-12 Dec days are left out");
+  assert.ok(Math.abs(ani.splitShifts["1"] - ani.splitShifts["2"]) <= 2, `balanced over the other days: ${JSON.stringify(ani.splitShifts)} of ${JSON.stringify(ani.shifts)}`);
+  assert.ok(!result.quality.findings.some((finding) => finding.id === "seimbang-perempuan"), JSON.stringify(result.quality.findings));
+  const dir = await mkdtemp(path.join(tmpdir(), "roster-dispensation-split-"));
+  const file = path.join(dir, "Roster Desember 2026.xlsx");
+  await writeRosterWorkbook(result, file, { holidayCalendars: holidays, holidayNotes: [], holidayDifferences: [], inputFile: "Data Roster.xlsx" });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(file);
+  const verdicts = [];
+  const formulas = [];
+  workbook.getWorksheet("Pemeriksaan").eachRow((row) => row.eachCell((cell) => {
+    if (/Sama|Berbeda/.test(String(cell.value?.result))) verdicts.push(cell.value.result);
+    if (cell.value?.formula) formulas.push(cell.value.formula);
+  }));
+  assert.deepEqual([...new Set(verdicts)], ["✔ Sama"]);
+  assert.ok(formulas.some((formula) => /FIND\("2",Hitungan!/.test(formula)), "the Excel split formula reads the Dispensasi row");
+  assert.ok(result.notes.some((note) => note.startsWith("Dispensasi: Ani tidak masuk Shift 2 tgl 1–12 Des (Kuliah sore). Hari-hari itu tidak dihitung dalam pembagian Shift 1 / Shift 2,")), result.notes.join("\n"));
+  assert.ok(result.notes.some((note) => note.startsWith("Dispensasi: Eko tidak masuk Shift 1 tgl 14–18 Des (Sertifikasi pagi).")), result.notes.join("\n"));
 });

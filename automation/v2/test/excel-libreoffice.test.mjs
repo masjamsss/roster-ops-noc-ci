@@ -46,9 +46,9 @@ test("a manual edit that breaks rules is caught by the Excel formulas (double va
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(file);
   const roster = workbook.getWorksheet("Roster");
-  // Hilvani (row 8, Shift 1/2 only) gets Shift 3 on 15 Oct (column C = 1 Oct).
+  // Hana (row 8, Shift 1/2 only) gets Shift 3 on 15 Oct (column C = 1 Oct).
   const cell = roster.getCell(8, 3 + 14);
-  assert.equal(result.members[0].name, "Hilvani");
+  assert.equal(result.members[0].name, "Hana");
   cell.value = "3";
   await workbook.xlsx.writeFile(file);
   recalculate(file);
@@ -67,22 +67,22 @@ test("a manual edit that breaks rules is caught by the Excel formulas (double va
 test("after sickness in Excel: a short sickness (1-2 days) gets its own shorter period, a longer one keeps the normal one", { skip, timeout: 300_000 }, async () => {
   const rules = { ...DEFAULT_RULES, nightFreeDaysAfterSick: 5, nightFreeDaysAfterShortSick: 2 };
   const requests = [
-    { memberId: "rizky", name: "Rizky", from: "2026-10-14", to: "2026-10-14", code: "S", kind: "Sakit", source: "test" },
-    { memberId: "addin", name: "Addin", from: "2026-10-06", to: "2026-10-08", code: "S", kind: "Sakit", source: "test" }
+    { memberId: "rudi", name: "Rudi", from: "2026-10-14", to: "2026-10-14", code: "S", kind: "Sakit", source: "test" },
+    { memberId: "agus", name: "Agus", from: "2026-10-06", to: "2026-10-08", code: "S", kind: "Sakit", source: "test" }
   ];
   const result = await generateRoster({ config: makeConfig({ year: 2026, month: 10, rules, requests, search: { beamWidth: 300 } }), calendars: [{ year: 2026, days: [] }], history });
   const file = path.join(await mkdtemp(path.join(tmpdir(), "roster-lo-")), "Roster Oktober 2026.xlsx");
   await writeRosterWorkbook(result, file, { holidayCalendars: [], holidayNotes: [], holidayDifferences: [], inputFile: "Data Roster.xlsx" });
   const before = await verifyWorkbook(file);
   assert.deepEqual([before.errors, before.mismatches.slice(0, 5)], [[], []], "fresh: Excel = program");
-  // By hand: Rizky Shift 3 on the 3rd day back after 1 day sick (allowed),
-  // Addin Shift 3 on the 3rd day back after 3 days sick (not allowed). Column C = 1 Oct.
+  // By hand: Rudi Shift 3 on the 3rd day back after 1 day sick (allowed),
+  // Agus Shift 3 on the 3rd day back after 3 days sick (not allowed). Column C = 1 Oct.
   const rowOf = (id) => 8 + result.members.findIndex((member) => member.id === id);
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(file);
   const roster = workbook.getWorksheet("Roster");
-  roster.getCell(rowOf("rizky"), 3 + 16).value = "3";
-  roster.getCell(rowOf("addin"), 3 + 10).value = "3";
+  roster.getCell(rowOf("rudi"), 3 + 16).value = "3";
+  roster.getCell(rowOf("agus"), 3 + 10).value = "3";
   await workbook.xlsx.writeFile(file);
   recalculate(file);
   const after = new ExcelJS.Workbook();
@@ -91,5 +91,35 @@ test("after sickness in Excel: a short sickness (1-2 days) gets its own shorter 
   after.getWorksheet("Pemeriksaan").eachRow((row) => { if (textOf(row.getCell(2).value).startsWith("Setelah sakit")) sick = row; });
   assert.ok(sick, "the rule row exists");
   assert.match(textOf(sick.getCell(2).value), /2 hari bila sakit hanya 1–2 hari/);
-  assert.equal(textOf(sick.getCell(6).value), "✖ Tidak (1)", "only Addin's night breaks the rule");
+  assert.equal(textOf(sick.getCell(6).value), "✖ Tidak (1)", "only Agus's night breaks the rule");
+});
+
+test("a manual edit that makes the night workers' Shift 1 / Shift 2 uneven is counted by the Excel formula too", { skip, timeout: 300_000 }, async () => {
+  const { result, file } = await octoberWorkbook();
+  const quality = (book) => {
+    let found = null;
+    book.getWorksheet("Pemeriksaan").eachRow((row) => { if (textOf(row.getCell(2).value).startsWith("Shift 1 dan Shift 2 kurang merata")) found = row; });
+    return found;
+  };
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(file);
+  const fresh = quality(workbook);
+  assert.ok(fresh, "the quality row exists");
+  assert.equal(textOf(fresh.getCell(8).value), "✔ Sama");
+  // By hand: Rudi only Shift 1, Wawan only Shift 2 on their day-shift days.
+  const roster = workbook.getWorksheet("Roster");
+  const rowOf = (id) => 8 + result.members.findIndex((member) => member.id === id);
+  for (let column = 3; column < 3 + result.days.length; column += 1) {
+    const rudi = roster.getCell(rowOf("rudi"), column);
+    const wawan = roster.getCell(rowOf("wawan"), column);
+    if (textOf(rudi.value) === "2") rudi.value = "1";
+    if (textOf(wawan.value) === "1") wawan.value = "2";
+  }
+  await workbook.xlsx.writeFile(file);
+  recalculate(file);
+  const after = new ExcelJS.Workbook();
+  await after.xlsx.readFile(file);
+  const row = quality(after);
+  assert.ok(Number(textOf(row.getCell(6).value)) >= 2, `Excel: ${textOf(row.getCell(6).value)} people uneven`);
+  assert.equal(textOf(row.getCell(7).value), String(result.quality.findings.find((finding) => finding.id === "shift2-merata")?.count ?? 0));
 });

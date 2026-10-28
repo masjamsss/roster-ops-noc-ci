@@ -5,7 +5,7 @@ import test from "node:test";
 import { DEFAULT_PORTFOLIO, DEFAULT_RULES, DEFAULT_TEAM, makeConfig } from "../src/defaults.mjs";
 import { generateRoster, plannedWorkers } from "../src/engine.mjs";
 import { fairnessOffsets } from "../src/objective.mjs";
-import { rollingStats } from "../src/history.mjs";
+import { dispensationDates, rollingStats } from "../src/history.mjs";
 import { parseRosterCsv } from "../src/roster-csv.mjs";
 
 const september = parseRosterCsv(readFileSync(new URL("./fixtures/september-2026.csv", import.meta.url), "utf8"));
@@ -60,14 +60,14 @@ test("real October 2026 continues correctly from the actual September roster", {
   const result = await generateRoster({ config: makeConfig({ year: 2026, month: 10 }), calendars: noHolidays(2026), history: septemberHistory });
   assert.equal(result.audit.ok, true, JSON.stringify(result.audit.checks.filter((item) => !item.ok), null, 1));
   const s = result.schedule;
-  assert.deepEqual([s.rizky["2026-10-01"], s.rizky["2026-10-02"]], ["3", "3"], "Rizky takes the first night block");
-  assert.deepEqual([s.arman["2026-10-01"], s.arman["2026-10-02"]], ["H", "H"], "Arman recovers after 29-30 Sep nights");
+  assert.deepEqual([s.rudi["2026-10-01"], s.rudi["2026-10-02"]], ["3", "3"], "Rudi takes the first night block");
+  assert.deepEqual([s.ardi["2026-10-01"], s.ardi["2026-10-02"]], ["H", "H"], "Ardi recovers after 29-30 Sep nights");
   for (const owners of nightOwners(result)) assert.equal(owners.length, 1);
   for (const block of result.nightBlocks) {
     assert.ok(block.length >= 2 && block.length <= 3);
     assert.ok(block.start >= "2026-10-01" && block.end <= "2026-10-31");
   }
-  for (const id of ["hilvani", "pavitasari"]) {
+  for (const id of ["hana", "putri"]) {
     const summary = result.memberSummary[id];
     assert.equal(summary.shifts["3"], 0);
     assert.ok(Math.abs(summary.shifts["1"] - summary.shifts["2"]) <= 2, `${id} balanced S1 ${summary.shifts["1"]} vs S2 ${summary.shifts["2"]} (user's decision), also with 2-1-1 days`);
@@ -79,7 +79,7 @@ test("real October 2026 continues correctly from the actual September roster", {
   // 20.5 before 30 Sep; with 3-night blocks only when forced (user's decision,
   // healthier) the men lose about half a day.
   assert.ok(average >= 20, `people work close to the 22-day target, got ${workDays}`);
-  assert.deepEqual(result.days.filter((day) => day.status === "MINIMAL").map((day) => day.date), [], "no 1-1-1 weekdays (1 Oct can be 2-1-1: Hilvani + Willy on Shift 1)");
+  assert.deepEqual(result.days.filter((day) => day.status === "MINIMAL").map((day) => day.date), [], "no 1-1-1 weekdays (1 Oct can be 2-1-1: Hana + Wawan on Shift 1)");
   const upsideDown = result.days.filter((day) => !day.isSpecial && day.counts["1"] < day.counts["2"]);
   assert.deepEqual(upsideDown.map((day) => day.date), [], "morning traffic is higher: never fewer people on Shift 1 than on Shift 2");
   assert.ok(result.notes.some((note) => note.startsWith("Setiap hari kerja, Shift 1")), "the notes confirm the Shift 1 rule");
@@ -117,12 +117,12 @@ test("parallel attempts: at most half the cores and about 2.8 GB of memory each 
 });
 
 test("a short sickness with its own night-free period: the roster follows it and the notes say until when", { timeout: 300_000 }, async () => {
-  const requests = [{ memberId: "rizky", name: "Rizky", from: "2026-10-14", to: "2026-10-14", code: "S", kind: "Sakit", source: "test" }];
+  const requests = [{ memberId: "rudi", name: "Rudi", from: "2026-10-14", to: "2026-10-14", code: "S", kind: "Sakit", source: "test" }];
   const rules = { ...DEFAULT_RULES, nightFreeDaysAfterShortSick: 2 };
   const result = await generateRoster({ config: makeConfig({ year: 2026, month: 10, rules, requests, search: { beamWidth: 1500 } }), calendars: noHolidays(2026), history: septemberHistory });
   assert.equal(result.audit.ok, true);
-  assert.ok(result.notes.some((note) => /Rizky sakit 14 Okt; kembali tgl 15 Okt dengan shift pagi\/siang, tanpa Shift 3 sampai 16 Okt/.test(note)), result.notes.filter((note) => /sakit/.test(note)).join("\n"));
-  assert.ok(!["2026-10-15", "2026-10-16"].some((date) => result.schedule.rizky[date] === "3"));
+  assert.ok(result.notes.some((note) => /Rudi sakit 14 Okt; kembali tgl 15 Okt dengan shift pagi\/siang, tanpa Shift 3 sampai 16 Okt/.test(note)), result.notes.filter((note) => /sakit/.test(note)).join("\n"));
+  assert.ok(!["2026-10-15", "2026-10-16"].some((date) => result.schedule.rudi[date] === "3"));
 });
 
 test("hours above the daily limit (a night is 9 net hours, the 5-day scheme allows 8) are counted per person for HR", { timeout: 300_000 }, async () => {
@@ -148,7 +148,7 @@ test("the default best-result portfolio: the normal search first, then 5 variant
 test("updating a month: the current roster is kept where possible, earlier days are frozen, every change is listed", { timeout: 600_000 }, async () => {
   const base = await generateRoster({ config: makeConfig({ year: 2026, month: 10, search: { beamWidth: 1500 } }), calendars: noHolidays(2026), history: septemberHistory });
   const reference = base.schedule;
-  const sick = [{ memberId: "hilvani", name: "Hilvani", from: "2026-10-14", to: "2026-10-16", code: "S", kind: "Sakit", source: "test" }];
+  const sick = [{ memberId: "hana", name: "Hana", from: "2026-10-14", to: "2026-10-16", code: "S", kind: "Sakit", source: "test" }];
   const run = (extra) => generateRoster({ config: { ...makeConfig({ year: 2026, month: 10, requests: sick, search: { beamWidth: 1500 } }), ...extra }, calendars: noHolidays(2026), history: septemberHistory });
   const kept = await run({ reference, freezeBefore: "2026-10-12" });
   const fresh = await run({});
@@ -156,7 +156,7 @@ test("updating a month: the current roster is kept where possible, earlier days 
   for (const id of Object.keys(reference)) {
     for (const date of Object.keys(reference[id])) if (date < "2026-10-12") assert.equal(kept.schedule[id][date], reference[id][date], `${id} ${date} is frozen`);
   }
-  assert.deepEqual(["2026-10-14", "2026-10-15", "2026-10-16"].map((date) => kept.schedule.hilvani[date]), ["S", "S", "S"]);
+  assert.deepEqual(["2026-10-14", "2026-10-15", "2026-10-16"].map((date) => kept.schedule.hana[date]), ["S", "S", "S"]);
   const changed = (result) => Object.keys(reference).reduce((sum, id) => sum + Object.keys(reference[id]).filter((date) => result.schedule[id][date] !== reference[id][date]).length, 0);
   assert.equal(kept.changes.length, changed(kept), "every change is listed");
   assert.ok(kept.changes.every((change) => change.date >= "2026-10-12" && change.from === reference[change.memberId][change.date]));
@@ -165,30 +165,30 @@ test("updating a month: the current roster is kept where possible, earlier days 
   assert.ok(kept.notes.some((note) => /perubahan/i.test(note) && /12 Okt/.test(note)), "the notes say what changed and from when");
 });
 
-test("back from hospital: Rizky (sick 1-5 Oct) gets no night shift until 11 Oct, and the notes say so", { timeout: 300_000 }, async () => {
-  const requests = [{ memberId: "rizky", name: "Rizky", from: "2026-10-01", to: "2026-10-05", code: "S", kind: "Sakit", source: "test" }];
+test("back from hospital: Rudi (sick 1-5 Oct) gets no night shift until 11 Oct, and the notes say so", { timeout: 300_000 }, async () => {
+  const requests = [{ memberId: "rudi", name: "Rudi", from: "2026-10-01", to: "2026-10-05", code: "S", kind: "Sakit", source: "test" }];
   const result = await generateRoster({ config: makeConfig({ year: 2026, month: 10, requests, search: { beamWidth: 1500 } }), calendars: noHolidays(2026), history: septemberHistory });
   assert.equal(result.audit.ok, true);
-  const firstDays = ["2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10"].map((date) => result.schedule.rizky[date]);
+  const firstDays = ["2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10"].map((date) => result.schedule.rudi[date]);
   assert.ok(!firstDays.includes("3"), `first 5 days back: ${firstDays.join(" ")}`);
-  assert.ok(result.notes.some((note) => /Rizky/.test(note) && /tanpa Shift 3 sampai 10 Okt/.test(note)), "the notes explain the return");
+  assert.ok(result.notes.some((note) => /Rudi/.test(note) && /tanpa Shift 3 sampai 10 Okt/.test(note)), "the notes explain the return");
 });
 
 test("an impossible day explains which shift cannot be filled, why, and what the admin can do", { timeout: 120_000 }, async () => {
-  const requests = ["rizky", "willy", "arman", "addin"].map((id) => ({ memberId: id, name: id, from: "2026-10-12", to: "2026-10-13", code: "C", kind: "Cuti", source: "test" }));
+  const requests = ["rudi", "wawan", "ardi", "agus"].map((id) => ({ memberId: id, name: id, from: "2026-10-12", to: "2026-10-13", code: "C", kind: "Cuti", source: "test" }));
   await assert.rejects(
     generateRoster({ config: makeConfig({ year: 2026, month: 10, requests, search: { beamWidth: 800 } }), calendars: noHolidays(2026), history: septemberHistory }),
     (error) => error.name === "RosterError"
       && /12 Oktober 2026/.test(error.message)
       && /Shift 3 tidak bisa diisi/.test(error.message)
-      && /Rizky cuti/.test(error.message) && /Addin cuti/.test(error.message)
+      && /Rudi cuti/.test(error.message) && /Agus cuti/.test(error.message)
       && /tidak boleh Shift 3/.test(error.message)
       && /anggota sementara/.test(error.message)
   );
 });
 
 test("the suggested fix works: a temporary outside member covers the nights while all men are away", { timeout: 300_000 }, async () => {
-  const requests = ["rizky", "willy", "arman", "addin"].map((id) => ({ memberId: id, name: id, from: "2026-10-12", to: "2026-10-13", code: "C", kind: "Cuti", source: "test" }));
+  const requests = ["rudi", "wawan", "ardi", "agus"].map((id) => ({ memberId: id, name: id, from: "2026-10-12", to: "2026-10-13", code: "C", kind: "Cuti", source: "test" }));
   const team = [...DEFAULT_TEAM, { id: "doni", name: "Doni", gender: "L", eligibleShifts: ["1", "2", "3"], activeFrom: "2026-10-12", activeUntil: "2026-10-13" }];
   const result = await generateRoster({ config: makeConfig({ year: 2026, month: 10, team, requests, search: { beamWidth: 1500 } }), calendars: noHolidays(2026), history: septemberHistory });
   assert.equal(result.audit.ok, true);
@@ -197,7 +197,7 @@ test("the suggested fix works: a temporary outside member covers the nights whil
 });
 
 test("a Friday with every female agent on leave is reported, not hidden behind 'every Friday is covered'", { timeout: 300_000 }, async () => {
-  const requests = ["hilvani", "pavitasari"].map((id) => ({ memberId: id, name: id, from: "2026-10-19", to: "2026-10-23", code: "C", kind: "Cuti", source: "test" }));
+  const requests = ["hana", "putri"].map((id) => ({ memberId: id, name: id, from: "2026-10-19", to: "2026-10-23", code: "C", kind: "Cuti", source: "test" }));
   const result = await generateRoster({ config: makeConfig({ year: 2026, month: 10, requests, search: { beamWidth: 1500 } }), calendars: noHolidays(2026), history: septemberHistory });
   assert.equal(result.audit.ok, true);
   assert.ok(!result.notes.some((note) => note.startsWith("Setiap Jumat, Shift 1 ada agen perempuan")), "not every Friday is covered");
@@ -222,31 +222,31 @@ test("best-result variants run in parallel on several CPU cores with exactly the
 
 test("a 1-1-1 day explains, person by person, why nobody else could work", { timeout: 300_000 }, async () => {
   const requests = [
-    { memberId: "rizky", name: "Rizky", from: "2026-10-01", to: "2026-10-05", code: "S", kind: "Sakit", source: "test" },
-    { memberId: "willy", name: "Willy", from: "2026-10-03", to: "2026-10-03", code: "C", kind: "Cuti", source: "test" }
+    { memberId: "rudi", name: "Rudi", from: "2026-10-01", to: "2026-10-05", code: "S", kind: "Sakit", source: "test" },
+    { memberId: "wawan", name: "Wawan", from: "2026-10-03", to: "2026-10-03", code: "C", kind: "Cuti", source: "test" }
   ];
   const result = await generateRoster({ config: makeConfig({ year: 2026, month: 10, requests, search: { beamWidth: 1500 } }), calendars: noHolidays(2026), history: septemberHistory });
   const minimal = result.days.filter((day) => day.status === "MINIMAL").map((day) => day.date);
   assert.ok(minimal.includes("2026-10-01"), `1 Oct is 1-1-1: ${minimal}`);
   const note = result.notes.find((item) => item.startsWith("1 Okt hanya 1-1-1"));
   assert.ok(note, result.notes.join("\n"));
-  assert.match(note, /Rizky sakit/);
-  assert.match(note, /Arman masih istirahat setelah Shift 3/);
+  assert.match(note, /Rudi sakit/);
+  assert.match(note, /Ardi masih istirahat setelah Shift 3/);
 });
 
 test("a requested Shift 3 on the 1st continues last month's night block (at most 3 nights), then 2 days off", { timeout: 300_000 }, async () => {
   const requests = [
-    { memberId: "rizky", name: "Rizky", from: "2026-10-01", to: "2026-10-05", code: "S", kind: "Sakit", source: "test" },
-    { memberId: "willy", name: "Willy", from: "2026-10-03", to: "2026-10-03", code: "C", kind: "Cuti", source: "test" },
-    { memberId: "arman", name: "Arman", from: "2026-10-01", to: "2026-10-01", code: "3", kind: "Minta Shift 3", source: "test" }
+    { memberId: "rudi", name: "Rudi", from: "2026-10-01", to: "2026-10-05", code: "S", kind: "Sakit", source: "test" },
+    { memberId: "wawan", name: "Wawan", from: "2026-10-03", to: "2026-10-03", code: "C", kind: "Cuti", source: "test" },
+    { memberId: "ardi", name: "Ardi", from: "2026-10-01", to: "2026-10-01", code: "3", kind: "Minta Shift 3", source: "test" }
   ];
   const result = await generateRoster({ config: makeConfig({ year: 2026, month: 10, requests, search: { beamWidth: 1500 } }), calendars: noHolidays(2026), history: septemberHistory });
-  const arman = result.schedule.arman;
-  assert.deepEqual([arman["2026-10-01"], arman["2026-10-02"], arman["2026-10-03"]], ["3", "H", "H"], "29-30 Sep + 1 Oct, then rest");
-  assert.notEqual(result.schedule.willy["2026-10-01"], "3");
+  const ardi = result.schedule.ardi;
+  assert.deepEqual([ardi["2026-10-01"], ardi["2026-10-02"], ardi["2026-10-03"]], ["3", "H", "H"], "29-30 Sep + 1 Oct, then rest");
+  assert.notEqual(result.schedule.wawan["2026-10-01"], "3");
   assert.ok(result.audit.ok);
-  assert.ok(result.notes.some((note) => /Arman melanjutkan blok Shift 3 dari 29–30 Sep sampai 1 Okt/.test(note)), result.notes.join("\n"));
-  assert.ok(!result.notes.some((note) => note.startsWith("Arman libur 1–2 Okt")), "no stale rest note");
+  assert.ok(result.notes.some((note) => /Ardi melanjutkan blok Shift 3 dari 29–30 Sep sampai 1 Okt/.test(note)), result.notes.join("\n"));
+  assert.ok(!result.notes.some((note) => note.startsWith("Ardi libur 1–2 Okt")), "no stale rest note");
 });
 
 test("Shift 3 is shared evenly: nights per available day and 3-night blocks per person (user, 30 Sep)", { timeout: 300_000 }, async () => {
@@ -257,7 +257,7 @@ test("Shift 3 is shared evenly: nights per available day and 3-night blocks per 
   const long = rows.map((row) => (row.match(/3{3,}/g) ?? []).length);
   assert.ok(Math.max(...long) - Math.min(...long) <= 1, `3-night blocks per man: ${long}`);
   // Fair over three months: September's share per available day is repaid
-  // (Addin did 6 nights in 14 available days, so he is owed about one night off).
+  // (Agus did 6 nights in 14 available days, so he is owed about one night off).
   const offsets = fairnessOffsets(result.members, septemberHistory.stats).nights;
   const menIndex = result.members.map((member, index) => (member.dayOnly ? -1 : index)).filter((index) => index >= 0);
   const adjusted = menIndex.map((index, k) => nights[k] - offsets[index]); // as in objective.mjs
@@ -276,8 +276,8 @@ test("3-night blocks only when forced (user, 30 Sep): a 31-day month needs just 
 
 test("not perfect yet: extra attempts aimed at what is left, then an honest report (no pretending)", { timeout: 600_000 }, async () => {
   const requests = [
-    { memberId: "rizky", name: "Rizky", from: "2026-10-05", to: "2026-10-09", code: "S", kind: "Sakit", source: "test" },
-    { memberId: "willy", name: "Willy", from: "2026-10-05", to: "2026-10-09", code: "C", kind: "Cuti", source: "test" }
+    { memberId: "rudi", name: "Rudi", from: "2026-10-05", to: "2026-10-09", code: "S", kind: "Sakit", source: "test" },
+    { memberId: "wawan", name: "Wawan", from: "2026-10-05", to: "2026-10-09", code: "C", kind: "Cuti", source: "test" }
   ];
   const config = makeConfig({ year: 2026, month: 10, requests, search: { beamWidth: 600, portfolio: [{}, { search: { beamScale: 1.2 } }], perfectRounds: 1, diverse: false, polishMs: 0 } });
   const result = await generateRoster({ config, calendars: noHolidays(2026), history: septemberHistory });
@@ -315,16 +315,55 @@ test("a quick single search does not claim to be perfect", { timeout: 300_000 },
 
 test("special requests: 'Hindari Shift 3' keeps the person off nights on those dates, and the audit checks it", { timeout: 300_000 }, async () => {
   const requests = [
-    { memberId: "willy", name: "Willy", from: "2026-10-01", to: "2026-10-12", code: "!3", kind: "Hindari Shift 3", source: "test" },
-    { memberId: "hilvani", name: "Hilvani", from: "2026-10-05", to: "2026-10-09", code: "!1", kind: "Hindari Shift 1", source: "test" }
+    { memberId: "wawan", name: "Wawan", from: "2026-10-01", to: "2026-10-12", code: "!3", kind: "Hindari Shift 3", source: "test" },
+    { memberId: "hana", name: "Hana", from: "2026-10-05", to: "2026-10-09", code: "!1", kind: "Hindari Shift 1", source: "test" }
   ];
   const result = await generateRoster({ config: makeConfig({ year: 2026, month: 10, requests, search: { beamWidth: 1500 } }), calendars: noHolidays(2026), history: septemberHistory });
   assert.ok(result.audit.ok);
   const between = (id, from, to) => result.days.filter((day) => day.date >= from && day.date <= to).map((day) => result.schedule[id][day.date]);
   const valid = new Set(["1", "2", "3", "H", "C", "S", "T", "-"]);
   for (const [id, row] of Object.entries(result.schedule)) for (const code of Object.values(row)) assert.ok(valid.has(code), `${id}: "${code}" is not a roster code`);
-  assert.ok(!between("willy", "2026-10-01", "2026-10-12").includes("3"), between("willy", "2026-10-01", "2026-10-12").join(""));
-  assert.ok(between("willy", "2026-10-01", "2026-10-12").filter((code) => code === "1" || code === "2").length >= 5, "Willy still works day shifts then");
-  assert.ok(!between("hilvani", "2026-10-05", "2026-10-09").includes("1"));
-  assert.ok(result.schedule.willy && result.days.some((day) => day.date > "2026-10-12" && result.schedule.willy[day.date] === "3"), "nights again after the dates");
+  assert.ok(!between("wawan", "2026-10-01", "2026-10-12").includes("3"), between("wawan", "2026-10-01", "2026-10-12").join(""));
+  assert.ok(between("wawan", "2026-10-01", "2026-10-12").filter((code) => code === "1" || code === "2").length >= 5, "Wawan still works day shifts then");
+  assert.ok(!between("hana", "2026-10-05", "2026-10-09").includes("1"));
+  assert.ok(result.schedule.wawan && result.days.some((day) => day.date > "2026-10-12" && result.schedule.wawan[day.date] === "3"), "nights again after the dates");
+});
+
+test("Dispensasi Shift 3 (user, 28 Oct): no nights on those days, no night debt this month or next, a note for the OM", { timeout: 300_000 }, async () => {
+  const request = (dispensation) => ({
+    memberId: "rudi", name: "Rudi", from: "2026-10-16", to: "2026-10-31", code: "!3", note: "Pelatihan K3", source: "test",
+    ...(dispensation ? { kind: "Dispensasi Shift 3", dispensation: true } : { kind: "Hindari Shift 3" })
+  });
+  const run = (dispensation) => generateRoster({ config: makeConfig({ year: 2026, month: 10, requests: [request(dispensation)], search: { beamWidth: 600 } }), calendars: noHolidays(2026), history: septemberHistory });
+  const [excused, owed] = [await run(true), await run(false)];
+  for (const result of [excused, owed]) {
+    assert.ok(result.audit.ok);
+    assert.ok(Object.entries(result.schedule.rudi).every(([date, code]) => date < "2026-10-16" || code !== "3"), "no Shift 3 from 16 Oct");
+  }
+  // This month: his nights are compared over the 15 days he could do them.
+  assert.equal(excused.memberSummary.rudi.dispensationDays["3"], 16);
+  assert.equal(excused.fairness.members.find((item) => item.id === "rudi").months.at(-1).availableDays, 15, "the 3-month table counts the days he could do nights");
+  assert.doesNotMatch(excused.quality.findings.find((finding) => finding.id === "malam-adil")?.details.join(" ") ?? "", /Rudi/, "not compared on the days he was excused");
+  assert.match(owed.quality.findings.find((finding) => finding.id === "malam-adil")?.details.join(" ") ?? "", /Rudi/, "Hindari: his few nights count as uneven");
+  // Next month: what he would have to make up (the history keeps the Dispensasi with the month's requests).
+  const nextOffset = (result) => {
+    const codesById = Object.fromEntries(result.members.map((member) => [member.id, Object.values(result.schedule[member.id])]));
+    const stats = rollingStats([{ key: "2026-10", dates: Object.keys(result.schedule.rudi), codesById }], Object.keys(codesById), ["1", "2", "3"], "3", 3, { noNight: dispensationDates(result.requests, "3") });
+    return fairnessOffsets(result.members, stats).nights[result.members.findIndex((member) => member.id === "rudi")];
+  };
+  assert.ok(nextOffset(excused) < 0.6, `Dispensasi: little or nothing to make up in November, got ${nextOffset(excused)}`);
+  assert.ok(nextOffset(owed) > 1.5, `Hindari: about 2 nights to make up, got ${nextOffset(owed)}`);
+  assert.ok(excused.notes.some((note) => /^Dispensasi: Rudi tidak masuk Shift 3 tgl 16–31 Okt \(Pelatihan K3\)\. .*tidak dihitung dalam pembagian Shift 3/.test(note)), excused.notes.join("\n"));
+  assert.ok(!owed.notes.some((note) => note.startsWith("Dispensasi")), "Hindari is a personal request: no Dispensasi note");
+  assert.equal(excused.requests[0].dispensation, true, "kept in the month's result, so next month's history knows");
+});
+
+test("night workers share Shift 2 fairly, also without any history (user, 28 Oct: Rudi had 10 Shift 1 / 1 Shift 2)", { timeout: 300_000 }, async () => {
+  const result = await generateRoster({ config: makeConfig({ year: 2026, month: 11, search: { beamWidth: 1500 } }), calendars: noHolidays(2026), history: { key: "2026-10", dates: [], codesById: {}, source: "none" } });
+  assert.ok(result.audit.ok);
+  const men = result.members.filter((member) => !member.dayOnly).map((member) => ({ name: member.name, ...result.memberSummary[member.id].shifts }));
+  const share = men.reduce((sum, man) => sum + man["2"], 0) / men.reduce((sum, man) => sum + man["1"] + man["2"], 0);
+  const split = men.map((man) => `${man.name} ${man["1"]}/${man["2"]}`).join(", ");
+  for (const man of men) assert.ok(Math.abs(man["2"] - (man["1"] + man["2"]) * share) <= 1.5, `${man.name}: ${split}`);
+  assert.ok(!result.quality.findings.some((finding) => finding.id === "shift2-merata"), split);
 });

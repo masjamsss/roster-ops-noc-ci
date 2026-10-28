@@ -90,8 +90,11 @@ export function deriveNightQueue(codesById, nightEligibleIds, nightShiftId = "3"
 // nights or weekends. `months` is [{ key, dates, codesById }].
 // `longNightBlocks`: 3-night blocks, counted in the month of their third night
 // (a block may continue from the month before, e.g. 29-30 Sep + 1 Oct).
-export function rollingStats(months, memberIds, shiftIds, nightShiftId = "3", longBlock = 3) {
-  const fields = ["workDays", "nightDays", "weekendDays", "availableDays", "availableWeekendDays", "longNightBlocks"];
+// `nightAvailableDays`: available days minus Dispensasi Shift 3 days (`noNight`,
+// a Set of dates per member, see dispensationDates), so an approved exemption
+// from nights is no debt either (user, 28 Oct). A night worked anyway counts.
+export function rollingStats(months, memberIds, shiftIds, nightShiftId = "3", longBlock = 3, { noNight = {} } = {}) {
+  const fields = ["workDays", "nightDays", "weekendDays", "availableDays", "nightAvailableDays", "availableWeekendDays", "longNightBlocks"];
   const stats = Object.fromEntries(memberIds.map((id) => [id, { months: 0, ...Object.fromEntries(fields.map((field) => [field, 0])), perMonth: [] }]));
   const trailingNights = {};
   let previousEnd = null;
@@ -110,6 +113,7 @@ export function rollingStats(months, memberIds, shiftIds, nightShiftId = "3", lo
         const weekend = isWeekend(month.dates[index]);
         if (code === "H" || isShiftCode(code, shiftIds)) {
           item.availableDays += 1;
+          if (code === nightShiftId || !noNight[id]?.has(month.dates[index])) item.nightAvailableDays += 1;
           if (weekend) item.availableWeekendDays += 1;
         }
         if (!isShiftCode(code, shiftIds)) return;
@@ -125,4 +129,14 @@ export function rollingStats(months, memberIds, shiftIds, nightShiftId = "3", lo
     }
   }
   return stats;
+}
+
+// Dates of each person's Dispensasi for one shift: { memberId: Set of dates }.
+export function dispensationDates(requests, shiftId) {
+  const dates = {};
+  for (const request of requests ?? []) {
+    if (!request.dispensation || !request.code?.startsWith("!") || !request.code.slice(1).includes(shiftId)) continue;
+    for (let date = request.from; date <= request.to; date = isoDate(addDays(date, 1))) (dates[request.memberId] ??= new Set()).add(date);
+  }
+  return dates;
 }

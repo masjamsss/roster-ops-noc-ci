@@ -1,5 +1,5 @@
 // Six-month backtest (Oct 2026 - Mar 2027) with realistic events: leave,
-// training, a joiner (Budi, 11 Jan), a leaver (Willy, 15 Feb), two people on
+// training, a joiner (Budi, 11 Jan), a leaver (Wawan, 15 Feb), two people on
 // leave together in March, Christmas and Lebaran. Every weight or rule change
 // must be checked with it (see CLAUDE.md): the audit must pass every month and
 // staffing, Friday coverage, fairness, hours and work-life balance must not get
@@ -21,9 +21,9 @@ import { appendRequest, INPUT_LAYOUT } from "../src/input-workbook.mjs";
 const REAL_ROOT = process.env.ROSTER_DATA ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const MONTHS = ["2026-10", "2026-11", "2026-12", "2027-01", "2027-02", "2027-03"];
 const EVENTS = [
-  ["Addin", "2026-11-16", "2026-11-18", "Cuti"], ["Willy", "2026-11-09", "2026-11-09", "Training/Dinas"],
-  ["Hilvani", "2026-12-28", "2026-12-31", "Cuti"],
-  ["Rizky", "2027-03-12", "2027-03-16", "Cuti"], ["Pavitasari", "2027-03-12", "2027-03-16", "Cuti"]
+  ["Agus", "2026-11-16", "2026-11-18", "Cuti"], ["Wawan", "2026-11-09", "2026-11-09", "Training/Dinas"],
+  ["Hana", "2026-12-28", "2026-12-31", "Cuti"],
+  ["Rudi", "2027-03-12", "2027-03-16", "Cuti"], ["Putri", "2027-03-12", "2027-03-16", "Cuti"]
 ];
 
 const args = process.argv.slice(2);
@@ -49,7 +49,7 @@ try {
   budi.getCell(4).value = "L";
   for (const column of [5, 6, 7]) budi.getCell(column).value = "Ya";
   budi.getCell(8).value = new Date("2027-01-11T00:00:00Z");
-  members.getRow(INPUT_LAYOUT.members.firstRow + 3).getCell(9).value = new Date("2027-02-15T00:00:00Z"); // Willy leaves
+  members.getRow(INPUT_LAYOUT.members.firstRow + 3).getCell(9).value = new Date("2027-02-15T00:00:00Z"); // Wawan leaves
   await workbook.xlsx.writeFile(book);
 
   const totals = { nights: {}, longBlocks: {}, weekends: {}, ideal: 0, minimal: 0, serious: 0, weeksOver: 0, heaviest: 0, wlb: [] };
@@ -63,6 +63,7 @@ try {
     const status = result.days.reduce((counts, day) => ({ ...counts, [day.status]: (counts[day.status] ?? 0) + 1 }), {});
     const weeks = result.members.flatMap((member) => result.memberSummary[member.id].weeklyHours.map((week) => week.hours));
     const women = result.members.filter((member) => member.dayOnly).map((member) => `${result.memberSummary[member.id].shifts["1"]}/${result.memberSummary[member.id].shifts["2"]}`);
+    const nightDay = night.filter((member) => result.memberSummary[member.id].inactiveDays === 0).map((member) => `${result.memberSummary[member.id].shifts["1"]}/${result.memberSummary[member.id].shifts["2"]}`);
     for (const member of night) {
       totals.nights[member.name] = (totals.nights[member.name] ?? 0) + nightsOf(member);
       totals.longBlocks[member.name] = (totals.longBlocks[member.name] ?? 0) + longOf(member);
@@ -77,7 +78,7 @@ try {
     console.log([
       key, result.audit.ok ? "audit OK" : "AUDIT FAIL",
       `IDEAL ${status.IDEAL ?? 0} CUKUP ${status.CUKUP ?? 0} MINIMAL ${status.MINIMAL ?? 0}`,
-      `nights ${night.map(nightsOf).join(",")}`, `3-night ${night.map(longOf).join(",")}`, `women S1/S2 ${women.join(" ")}`,
+      `nights ${night.map(nightsOf).join(",")}`, `3-night ${night.map(longOf).join(",")}`, `women S1/S2 ${women.join(" ")}`, `night workers S1/S2 ${nightDay.join(" ")}`,
       `quality ${result.quality.serious}p/${result.quality.notices}n${result.quality.serious ? ` (${result.quality.findings.filter((finding) => finding.level === "penting").map((finding) => `${finding.id} ${finding.details.join(", ")}`).join("; ")})` : ""}`, `max week ${Math.max(...weeks)} h`,
       `work-life ${result.wellbeing?.team ?? "-"} (min ${Math.min(...result.wellbeing.members.filter((item) => item.score !== null).map((item) => item.score))})`,
       result.search.perfect ? `perfect ${result.search.perfect.reached ? "YES" : "no"} (${result.search.perfect.tried} tried, ${result.search.perfect.rounds} extra rounds, winner #${result.search.chosenVariant}${result.search.portfolio[result.search.chosenVariant - 1]?.aim ? ` aimed at ${result.search.portfolio[result.search.chosenVariant - 1].aim.join("+")}` : ""})` : "perfect -",
